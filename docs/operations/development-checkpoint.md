@@ -12,4 +12,4 @@
 
 上游修正原型只调整三处：无 WASI 时不编译文件适配、明确包含 `<sys/stat.h>`、在 IDF 无可执行堆能力时拒绝执行映射并保留普通映射。实验保留 `CONFIG_ESP_SYSTEM_MEMPROT=y`，未定义虚假的 `MALLOC_CAP_EXEC`，也未修改固定 SDK 或 `managed_components`。[上游 PR #5116](https://github.com/wasm-micro-runtime/wasm-micro-runtime/pull/5116)已提交该修正；本仓正式依赖仍指向未修正的 WAMR SHA，上游源码修复并取得可消费的精确提交前，P6-02 的 C3 构建条件未满足。
 
-当前尚无 Flash 三包槽、设备流式验包、产品实例管理、真实签名包运行、C3 堆峰值和组合容量证据。第 9、12、13 节的对应任务均未验收。
+当前尚无 Flash 三包槽、设备流式验包、产品实例管理、真实签名包运行、C3 堆峰值和组合容量证据。主计划 P6-02 及后续运行、容量任务仍未验收。
