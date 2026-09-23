@@ -2,6 +2,7 @@
 #include "esp_container.h"
 
 #include <stdbool.h>
+#include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -30,6 +31,7 @@ static const econtainer_runtime_limits_t limits = {
     .init_instruction_budget = 1000,
     .event_instruction_budget = 1000,
     .stop_instruction_budget = 1000,
+    .max_entry_duration_ms = 1000,
 };
 
 #ifdef ECONTAINER_TEST_RESOURCE_STATS
@@ -248,6 +250,11 @@ static bool test_wrong_abi_and_release(const char *wrong_path, const char *count
     CHECK(runtime == NULL);
     too_small = limits;
     too_small.init_instruction_budget = 0;
+    CHECK(econtainer_runtime_open(bytes, length, &too_small, &runtime) ==
+          ECONTAINER_RUNTIME_INVALID_INPUT);
+    CHECK(runtime == NULL);
+    too_small = limits;
+    too_small.max_entry_duration_ms = 0;
     CHECK(econtainer_runtime_open(bytes, length, &too_small, &runtime) ==
           ECONTAINER_RUNTIME_INVALID_INPUT);
     CHECK(runtime == NULL);
@@ -664,10 +671,83 @@ static bool test_repeated_timer_release(const char *path)
     return true;
 }
 
+static bool test_expired_entry(const char *path)
+{
+    size_t length = 0;
+    uint8_t *bytes = read_file(path, &length);
+    CHECK(bytes != NULL);
+    econtainer_runtime_limits_t quick = limits;
+    quick.allowed_capabilities = ECONTAINER_CAP_MONOTONIC_TIME |
+                                 ECONTAINER_CAP_LOG | ECONTAINER_CAP_TIMER;
+    quick.max_log_bytes = 16;
+    quick.max_timers = 1;
+    quick.max_entry_duration_ms = 20;
+    quick.event_instruction_budget = INT32_MAX;
+    econtainer_runtime_t *runtime = NULL;
+    CHECK(econtainer_runtime_open(bytes, length, &quick, &runtime) == ECONTAINER_RUNTIME_OK);
+    CHECK(econtainer_runtime_init(runtime) == ECONTAINER_RUNTIME_OK);
+    int32_t result = 123;
+    const uint8_t event[] = {'D'};
+    econtainer_runtime_result_t event_status = econtainer_runtime_on_event(
+        runtime, event, sizeof event, &result);
+    CHECK(event_status == ECONTAINER_RUNTIME_ENTRY_EXPIRED);
+    CHECK(result == 123);
+    CHECK(econtainer_runtime_state(runtime) == ECONTAINER_RUNTIME_FAILED);
+    uint8_t log[16] = {0};
+    size_t log_size = 99;
+    CHECK(econtainer_runtime_take_log(runtime, log, sizeof log, &log_size) ==
+          ECONTAINER_RUNTIME_NO_LOG && log_size == 99);
+    uint64_t deadline_ms = 0;
+    CHECK(econtainer_runtime_next_timer_deadline(runtime, &deadline_ms) ==
+          ECONTAINER_RUNTIME_INVALID_STATE);
+    econtainer_timer_event_t timer_event = {0};
+    CHECK(econtainer_runtime_poll_timer(runtime, &timer_event, &result) ==
+          ECONTAINER_RUNTIME_INVALID_STATE);
+    CHECK(econtainer_runtime_stop(runtime) == ECONTAINER_RUNTIME_INVALID_STATE);
+    CHECK(econtainer_runtime_close(&runtime) == ECONTAINER_RUNTIME_OK && runtime == NULL);
+
+    CHECK(econtainer_runtime_open(bytes, length, &quick, &runtime) == ECONTAINER_RUNTIME_OK);
+    CHECK(econtainer_runtime_init(runtime) == ECONTAINER_RUNTIME_OK);
+    result = 456;
+    const uint8_t returned_event[] = {'R'};
+    CHECK(econtainer_runtime_on_event(runtime, returned_event,
+                                      sizeof returned_event, &result) ==
+          ECONTAINER_RUNTIME_ENTRY_EXPIRED);
+    CHECK(result == 456);
+    CHECK(econtainer_runtime_state(runtime) == ECONTAINER_RUNTIME_FAILED);
+    CHECK(econtainer_runtime_take_log(runtime, log, sizeof log, &log_size) ==
+          ECONTAINER_RUNTIME_NO_LOG && log_size == 99);
+    CHECK(econtainer_runtime_close(&runtime) == ECONTAINER_RUNTIME_OK && runtime == NULL);
+
+    CHECK(econtainer_runtime_open(bytes, length, &quick, &runtime) == ECONTAINER_RUNTIME_OK);
+    CHECK(econtainer_runtime_init(runtime) == ECONTAINER_RUNTIME_OK);
+    const uint8_t timer_event_bytes[] = {'T'};
+    CHECK(econtainer_runtime_on_event(runtime, timer_event_bytes,
+                                      sizeof timer_event_bytes, &result) == ECONTAINER_RUNTIME_OK);
+    CHECK(result == 0);
+    CHECK(econtainer_runtime_next_timer_deadline(runtime, &deadline_ms) == ECONTAINER_RUNTIME_OK);
+    const uint8_t prior_event[] = {'P'};
+    CHECK(econtainer_runtime_on_event(runtime, prior_event,
+                                      sizeof prior_event, &result) == ECONTAINER_RUNTIME_OK);
+    CHECK(result == 0);
+    CHECK(econtainer_runtime_on_event(runtime, event, sizeof event, &result) ==
+          ECONTAINER_RUNTIME_ENTRY_EXPIRED);
+    CHECK(econtainer_runtime_next_timer_deadline(runtime, &deadline_ms) ==
+          ECONTAINER_RUNTIME_INVALID_STATE);
+    CHECK(econtainer_runtime_poll_timer(runtime, &timer_event, &result) ==
+          ECONTAINER_RUNTIME_INVALID_STATE);
+    CHECK(econtainer_runtime_take_log(runtime, log, sizeof log, &log_size) ==
+          ECONTAINER_RUNTIME_OK && log_size == 5 &&
+          memcmp(log, "prior", log_size) == 0);
+    CHECK(econtainer_runtime_close(&runtime) == ECONTAINER_RUNTIME_OK && runtime == NULL);
+    free(bytes);
+    return true;
+}
+
 int main(int argc, char **argv)
 {
-    if (argc != 10) {
-        fprintf(stderr, "usage: %s counter event-read init-loop event-loop stop-loop stop-fail wrong-signature host-api timer\n",
+    if (argc != 11) {
+        fprintf(stderr, "usage: %s counter event-read init-loop event-loop stop-loop stop-fail wrong-signature host-api timer deadline\n",
                 argv[0]);
         return 2;
     }
@@ -687,7 +767,8 @@ int main(int argc, char **argv)
                         test_failure_reopen(argv[1], argv[3], argv[4], argv[5], argv[6]) &&
                         test_repeated_native_release(argv[8]) &&
                         test_host_api(argv[8]) && test_timers(argv[9]) &&
-                        test_repeated_timer_release(argv[9]);
+                        test_repeated_timer_release(argv[9]) &&
+                        test_expired_entry(argv[10]);
     if (passed) {
         fprintf(stderr, "runtime instance: 100 counter, 100 native, 100 timer and 100 failure/reopen cycles passed\n");
     }

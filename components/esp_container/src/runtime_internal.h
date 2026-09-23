@@ -23,6 +23,8 @@ typedef struct {
     int32_t init_instruction_budget;
     int32_t event_instruction_budget;
     int32_t stop_instruction_budget;
+    /* Bounds accepted results, not synchronous WAMR/SDK return latency. */
+    uint32_t max_entry_duration_ms;
 } econtainer_runtime_limits_t;
 
 typedef enum {
@@ -39,6 +41,7 @@ typedef enum {
     ECONTAINER_RUNTIME_NO_LOG,
     ECONTAINER_RUNTIME_NO_TIMER,
     ECONTAINER_RUNTIME_NOT_AUTHORIZED,
+    ECONTAINER_RUNTIME_ENTRY_EXPIRED,
 } econtainer_runtime_result_t;
 
 typedef enum {

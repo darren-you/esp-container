@@ -72,6 +72,12 @@ def main() -> int:
     )
     timer_command[-1] = str(args.output_dir / "timer.wasm")
     subprocess.run(timer_command, check=True)
+    deadline_command = host_command.copy()
+    deadline_command[deadline_command.index(str(ROOT / "tests" / "host_api_guest.c"))] = str(
+        ROOT / "tests" / "deadline_guest.c"
+    )
+    deadline_command[-1] = str(args.output_dir / "deadline.wasm")
+    subprocess.run(deadline_command, check=True)
     return 0
 
 

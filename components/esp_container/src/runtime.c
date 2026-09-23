@@ -19,6 +19,7 @@
 
 #define ECONTAINER_TIMER_CAPACITY 8U
 #define ECONTAINER_TIMER_MAX_INTERVAL_MS 86400000U
+#define ECONTAINER_ENTRY_EXPIRED_REASON "container entry expired"
 
 typedef struct {
     uint64_t handle;
@@ -43,6 +44,8 @@ struct econtainer_runtime {
     size_t pending_log_size;
     atomic_bool call_active;
     bool guest_active;
+    bool entry_expired;
+    uint64_t entry_deadline_ms;
     bool stopping;
     bool natives_registered;
     bool wamr_initialized;
@@ -72,7 +75,8 @@ static bool limits_valid(const econtainer_runtime_limits_t *limits)
                 : limits->max_timers == 0) &&
            limits->init_instruction_budget > 0 &&
            limits->event_instruction_budget > 0 &&
-           limits->stop_instruction_budget > 0;
+           limits->stop_instruction_budget > 0 &&
+           limits->max_entry_duration_ms > 0;
 }
 
 static bool function_type_matches(wasm_func_type_t type, uint32_t param_count)
@@ -174,6 +178,8 @@ static bool claim_call(econtainer_runtime_t *runtime)
     return atomic_compare_exchange_strong(&runtime->call_active, &expected, true);
 }
 
+static bool monotonic_ms(uint64_t *result);
+
 static econtainer_runtime_t *native_owner(wasm_exec_env_t environment)
 {
     econtainer_runtime_t *runtime =
@@ -184,6 +190,18 @@ static econtainer_runtime_t *native_owner(wasm_exec_env_t environment)
         !atomic_load(&runtime->call_active)) {
         wasm_runtime_set_exception(wasm_runtime_get_module_inst(environment),
                                    "Exception: invalid container host call owner");
+        return NULL;
+    }
+    uint64_t now_ms = 0;
+    if (!monotonic_ms(&now_ms)) {
+        wasm_runtime_set_exception(runtime->instance,
+                                   "Exception: monotonic clock failed");
+        return NULL;
+    }
+    if (now_ms >= runtime->entry_deadline_ms) {
+        runtime->entry_expired = true;
+        wasm_runtime_set_exception(runtime->instance,
+                                   ECONTAINER_ENTRY_EXPIRED_REASON);
         return NULL;
     }
     return runtime;
@@ -430,17 +448,38 @@ econtainer_runtime_result_t econtainer_runtime_open(const uint8_t *wasm,
     return ECONTAINER_RUNTIME_OK;
 }
 
+static econtainer_runtime_result_t expire_entry(econtainer_runtime_t *runtime,
+                                                size_t prior_log_size)
+{
+    runtime->state = ECONTAINER_RUNTIME_FAILED;
+    runtime->pending_log_size = prior_log_size;
+    for (uint32_t index = 0; index < runtime->limits.max_timers; ++index)
+        runtime->timers[index].active = false;
+    return ECONTAINER_RUNTIME_ENTRY_EXPIRED;
+}
+
 static econtainer_runtime_result_t invoke(econtainer_runtime_t *runtime,
                                           wasm_function_inst_t function,
                                           int32_t budget, uint32_t argc,
                                           uint32_t *arguments, int32_t *result)
 {
+    uint64_t began_ms = 0;
+    if (!monotonic_ms(&began_ms) ||
+        began_ms > UINT64_MAX - runtime->limits.max_entry_duration_ms) {
+        runtime->state = ECONTAINER_RUNTIME_FAILED;
+        return ECONTAINER_RUNTIME_ENGINE_FAILURE;
+    }
+    const size_t prior_log_size = runtime->pending_log_size;
+    runtime->entry_deadline_ms = began_ms + runtime->limits.max_entry_duration_ms;
+    runtime->entry_expired = false;
     wasm_runtime_clear_exception(runtime->instance);
     wasm_runtime_set_instruction_count_limit(runtime->environment, budget);
     runtime->guest_active = true;
     const bool call_ok = wasm_runtime_call_wasm(runtime->environment, function,
                                                 argc, arguments);
     runtime->guest_active = false;
+    if (runtime->entry_expired)
+        return expire_entry(runtime, prior_log_size);
     if (!call_ok) {
         const char *exception = wasm_runtime_get_exception(runtime->instance);
         runtime->state = ECONTAINER_RUNTIME_FAILED;
@@ -453,6 +492,13 @@ static econtainer_runtime_result_t invoke(econtainer_runtime_t *runtime,
         runtime->state = ECONTAINER_RUNTIME_FAILED;
         return ECONTAINER_RUNTIME_ENGINE_FAILURE;
     }
+    uint64_t ended_ms = 0;
+    if (!monotonic_ms(&ended_ms)) {
+        runtime->state = ECONTAINER_RUNTIME_FAILED;
+        return ECONTAINER_RUNTIME_ENGINE_FAILURE;
+    }
+    if (ended_ms >= runtime->entry_deadline_ms)
+        return expire_entry(runtime, prior_log_size);
     *result = (int32_t)arguments[0];
     return ECONTAINER_RUNTIME_OK;
 }
