@@ -46,15 +46,14 @@ struct econtainer_runtime {
     bool stopping;
     bool natives_registered;
     bool wamr_initialized;
-    uint32_t generation;
-    uint32_t next_timer_serial;
     econtainer_timer_t timers[ECONTAINER_TIMER_CAPACITY];
 };
 
 /* WAMR init/destroy owns process-global state. The caller serializes methods
  * on the accepted instance; the atomic claim also rejects a second opener. */
 static atomic_bool runtime_claimed = false;
-static uint32_t next_runtime_generation = 1;
+/* runtime_claimed and the single guest owner serialize every allocation. */
+static uint64_t next_timer_handle = 1;
 
 static bool limits_valid(const econtainer_runtime_limits_t *limits)
 {
@@ -272,7 +271,7 @@ static uint64_t native_timer_start(wasm_exec_env_t environment,
          runtime->state != ECONTAINER_RUNTIME_RUNNING) ||
         delay_ms == 0 || delay_ms > ECONTAINER_TIMER_MAX_INTERVAL_MS ||
         period_ms > ECONTAINER_TIMER_MAX_INTERVAL_MS ||
-        runtime->next_timer_serial > 0xffffffU) return 0;
+        next_timer_handle == 0) return 0;
     uint32_t slot = runtime->limits.max_timers;
     for (uint32_t index = 0; index < runtime->limits.max_timers; ++index) {
         if (!runtime->timers[index].active) { slot = index; break; }
@@ -285,9 +284,7 @@ static uint64_t native_timer_start(wasm_exec_env_t environment,
         return 0;
     }
     if (now_ms > UINT64_MAX - delay_ms) return 0;
-    const uint64_t handle = ((uint64_t)runtime->generation << 32) |
-                            ((uint64_t)runtime->next_timer_serial++ << 8) |
-                            (uint64_t)(slot + 1);
+    const uint64_t handle = econtainer_runtime_issue_timer_handle(&next_timer_handle);
     runtime->timers[slot] = (econtainer_timer_t){
         .handle = handle, .deadline_ms = now_ms + delay_ms,
         .period_ms = period_ms, .active = true,
@@ -305,13 +302,15 @@ static int32_t native_timer_cancel(wasm_exec_env_t environment, uint64_t handle)
                                        "Exception: container timer not authorized");
         return -1;
     }
-    if (runtime->stopping || (handle >> 32) != runtime->generation) return -1;
-    const uint32_t slot = (uint32_t)(handle & 0xffU);
-    if (slot == 0 || slot > runtime->limits.max_timers ||
-        !runtime->timers[slot - 1].active ||
-        runtime->timers[slot - 1].handle != handle) return -1;
-    runtime->timers[slot - 1].active = false;
-    return 0;
+    if (runtime->stopping || handle == 0) return -1;
+    for (uint32_t index = 0; index < runtime->limits.max_timers; ++index) {
+        if (runtime->timers[index].active &&
+            runtime->timers[index].handle == handle) {
+            runtime->timers[index].active = false;
+            return 0;
+        }
+    }
+    return -1;
 }
 
 econtainer_runtime_result_t econtainer_runtime_open(const uint8_t *wasm,
@@ -340,10 +339,6 @@ econtainer_runtime_result_t econtainer_runtime_open(const uint8_t *wasm,
     if (!atomic_compare_exchange_strong(&runtime_claimed, &expected, true)) {
         return ECONTAINER_RUNTIME_BUSY;
     }
-    if (next_runtime_generation == 0) {
-        atomic_store(&runtime_claimed, false);
-        return ECONTAINER_RUNTIME_ENGINE_FAILURE;
-    }
     econtainer_runtime_t *runtime = calloc(1, sizeof(*runtime));
     if (runtime == NULL) {
         atomic_store(&runtime_claimed, false);
@@ -351,8 +346,6 @@ econtainer_runtime_result_t econtainer_runtime_open(const uint8_t *wasm,
     }
     runtime->limits = *limits;
     runtime->state = ECONTAINER_RUNTIME_LOADED;
-    runtime->generation = next_runtime_generation++;
-    runtime->next_timer_serial = 1;
     atomic_init(&runtime->call_active, false);
     if ((required_capabilities & ECONTAINER_CAP_LOG) != 0) {
         runtime->pending_log = malloc(limits->max_log_bytes);

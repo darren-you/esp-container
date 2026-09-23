@@ -41,6 +41,14 @@ int32_t econtainer_on_event(const uint8_t *bytes, uint32_t size_bytes)
         return temporary != 0 && econtainer_timer_cancel(temporary) == 0 &&
                econtainer_timer_cancel(temporary) == -1 ? 0 : -14;
     }
+    if (bytes[0] == 'D') {
+        const uint64_t canceled = econtainer_timer_start(1, 0);
+        if (canceled == 0 || econtainer_timer_cancel(canceled) != 0) return -17;
+        const uint64_t replacement = econtainer_timer_start(1, 0);
+        return replacement != 0 && replacement != canceled &&
+               econtainer_timer_cancel(canceled) == -1 &&
+               econtainer_timer_cancel(replacement) == 0 ? 0 : -18;
+    }
     if (bytes[0] == 'C' && size_bytes == 9)
         return econtainer_timer_cancel(read_handle(bytes + 1));
     return -15;

@@ -53,6 +53,16 @@ typedef struct {
     uint32_t skipped_periods;
 } econtainer_timer_event_t;
 
+/* Runtime-private handle allocator. A canceled handle is never reissued during
+ * this process lifetime. UINT64_MAX is the final valid value; zero is terminal. */
+static inline uint64_t econtainer_runtime_issue_timer_handle(uint64_t *next_handle)
+{
+    if (next_handle == NULL || *next_handle == 0) return 0;
+    const uint64_t issued = *next_handle;
+    *next_handle = issued + 1U;
+    return issued;
+}
+
 /* Inspect the raw Wasm memory section. WAMR may normalize page counts after
  * loading, so its export type cannot enforce this 64 KiB-page admission cap. */
 bool econtainer_wasm_memory_within_limit(const uint8_t *wasm, size_t wasm_size_bytes,

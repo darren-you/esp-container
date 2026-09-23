@@ -549,6 +549,10 @@ static bool test_timers(const char *path)
           ECONTAINER_RUNTIME_OK && result == 0);
     CHECK(econtainer_runtime_next_timer_deadline(runtime, &deadline) ==
           ECONTAINER_RUNTIME_NO_TIMER);
+    const uint8_t replace_canceled[] = {'D'};
+    CHECK(econtainer_runtime_on_event(runtime, replace_canceled,
+                                      sizeof replace_canceled, &result) ==
+          ECONTAINER_RUNTIME_OK && result == 0);
     const uint8_t schedule[] = {'A'};
     CHECK(econtainer_runtime_on_event(runtime, schedule, sizeof schedule, &result) ==
           ECONTAINER_RUNTIME_OK && result == 0);
@@ -609,6 +613,22 @@ static bool test_timers(const char *path)
     return true;
 }
 
+static bool test_timer_handle_boundary(void)
+{
+    CHECK(econtainer_runtime_issue_timer_handle(NULL) == 0);
+    uint64_t next = (UINT64_C(1) << 24) - 1U;
+    const uint64_t old_limit = econtainer_runtime_issue_timer_handle(&next);
+    const uint64_t after_old_limit = econtainer_runtime_issue_timer_handle(&next);
+    CHECK(old_limit == (UINT64_C(1) << 24) - 1U);
+    CHECK(after_old_limit == (UINT64_C(1) << 24));
+    CHECK(next == after_old_limit + 1U);
+    next = UINT64_MAX;
+    CHECK(econtainer_runtime_issue_timer_handle(&next) == UINT64_MAX);
+    CHECK(next == 0);
+    CHECK(econtainer_runtime_issue_timer_handle(&next) == 0 && next == 0);
+    return true;
+}
+
 static bool test_repeated_timer_release(const char *path)
 {
     size_t length = 0;
@@ -657,7 +677,8 @@ int main(int argc, char **argv)
         return 1;
     }
 #endif
-    const bool passed = test_counter(argv[1]) && test_event_copy(argv[2]) &&
+    const bool passed = test_timer_handle_boundary() &&
+                        test_counter(argv[1]) && test_event_copy(argv[2]) &&
                         test_event_allocation_failure(argv[2]) &&
                         test_loop(argv[3], 0) && test_loop(argv[4], 1) &&
                         test_loop(argv[5], 2) &&
