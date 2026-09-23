@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+build/
+build_*/
+examples/*/build/
+examples/*/managed_components/
+examples/*/sdkconfig
+examples/*/sdkconfig.old
+dist/

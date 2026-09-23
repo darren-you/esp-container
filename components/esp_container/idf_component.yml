@@ -1,0 +1,10 @@
+version: "0.1.0"
+description: "ESP32 product package and WebAssembly runtime integration under development"
+url: "https://github.com/darren-you/esp-container"
+repository: "https://github.com/darren-you/esp-container.git"
+license: "Apache-2.0"
+dependencies:
+  idf: "==6.1.0"
+  wasm-micro-runtime:
+    git: "https://github.com/wasm-micro-runtime/wasm-micro-runtime.git"
+    version: "8c18e3f68b16c4bcaf05996b2636f6ed2b4cf629"

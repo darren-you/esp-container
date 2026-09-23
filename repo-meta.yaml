@@ -1,0 +1,41 @@
+schema_version: 5
+name: esp-container
+workspace_area: tooling
+archetype: tooling-repo
+lifecycle: incubating
+owner: darren-you
+governance_tier: standard
+domains:
+  - wasm-runtime
+domain_roots:
+  wasm-runtime:
+    - .
+delivery_surfaces:
+  - idf-component
+depends_on:
+  - esp-lwip
+default_workflows:
+  - test-idf-component
+doc_status:
+  architecture: present
+  api: present
+  release: missing
+github:
+  repo: darren-you/esp-container
+  visibility: public
+  about: 面向 ESP-IDF 的受控 Wasm 业务包运行组件、公开 guest SDK 与签名打包工具
+  topics:
+    - darren-space
+    - tooling-repo
+    - wasm-runtime
+    - idf-component
+    - esp32
+entrypoints:
+  - README.md
+  - AGENTS.md
+  - components/esp_container/include/esp_container.h
+  - guest-sdk/include/econtainer_guest.h
+  - tools/product_package.py
+  - examples/c3-runtime/README.md
+  - docs/design/source-provenance.md
+  - docs/operations/development-checkpoint.md
