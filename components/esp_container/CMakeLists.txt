@@ -1,6 +1,7 @@
 idf_component_register(SRCS "src/wasm_scan.c" "src/runtime.c"
+    "src/package_stream.c" "src/package_crypto.c"
     INCLUDE_DIRS "include" PRIV_INCLUDE_DIRS "src"
-    PRIV_REQUIRES wasm-micro-runtime esp_timer)
+    PRIV_REQUIRES wasm-micro-runtime esp_timer mbedtls)
 if(NOT CMAKE_BUILD_EARLY_EXPANSION)
     if(NOT CONFIG_WAMR_ENABLE_INTERP OR NOT CONFIG_WAMR_INTERP_CLASSIC OR
        NOT CONFIG_WAMR_INTERP_LOADER_NORMAL OR CONFIG_WAMR_INTERP_FAST OR

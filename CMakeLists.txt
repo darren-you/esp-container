@@ -1,12 +1,25 @@
 cmake_minimum_required(VERSION 3.16)
 
 project(esp_container VERSION 0.1.0 LANGUAGES C)
-add_library(esp_container STATIC components/esp_container/src/wasm_scan.c)
+find_package(OpenSSL REQUIRED COMPONENTS Crypto)
+add_library(esp_container STATIC
+    components/esp_container/src/wasm_scan.c
+    components/esp_container/src/package_stream.c
+    components/esp_container/src/package_crypto.c)
 target_include_directories(esp_container PUBLIC components/esp_container/include)
+target_include_directories(esp_container PRIVATE components/esp_container/src)
+target_link_libraries(esp_container PUBLIC OpenSSL::Crypto)
 target_compile_features(esp_container PUBLIC c_std_11)
 target_compile_options(esp_container PRIVATE -Wall -Wextra -Werror -Wconversion)
 include(CTest)
 if(BUILD_TESTING)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_executable(package_stream_test tests/package_stream_test.c)
+    target_link_libraries(package_stream_test PRIVATE esp_container)
+    target_compile_options(package_stream_test PRIVATE -Wall -Wextra -Werror -UNDEBUG)
+    add_test(NAME package_stream
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/package_stream_test.py"
+                "$<TARGET_FILE:package_stream_test>")
     add_executable(wasm_scan_test tests/wasm_scan_test.c)
     target_link_libraries(wasm_scan_test PRIVATE esp_container)
     target_compile_options(wasm_scan_test PRIVATE -Wall -Wextra -Werror -UNDEBUG)
