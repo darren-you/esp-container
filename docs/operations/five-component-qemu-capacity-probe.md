@@ -74,6 +74,25 @@ GDB 在两次实例化的 `wasm_allocate_linear_memory` 都读到单次连续申
 
 第二次生命周期发生于 Base 输出 `ESP_BASE_READY` 与 Wi-Fi 驱动初始化日志之后，但设备无 Wi-Fi 配置，reported 状态仍为 `wifi_state=unconfigured`、`mqtt_state=unsupported`、`frp_state=unsupported`。它只能证明这个 QEMU 仿真配置下，Base 已初始化时仍可短暂承载 64 KiB guest；不能证明真实网络流量、FRP/MQTT 活跃会话或 OTA 期间的峰值。第二次 guest 存活时最大连续块仅 57,344 字节，应视为后续组合测试的风险信号，不能直接用作产品限额。
 
+## 2026-09-24：当前 Base v3 的签名五组件复测
+
+旧切片的 Base `10cb851` 尚未包含现在的 MQTT/FRP owner。仓外复制当前 Base `0c9d8264a775a1bfea054db413d8b5a5da478be5` 固件源码，保留其组件锁 FRP `9158b7f2e2c555a14636aed26b5189902152d19e`、MQTT `9cac455b0184420353ff0283df3f100abaac3e6b`、OTA `bed5709fe517f62d60f2efad95491bc66756a42c`，加入 Container `567d760bf37b95ab82b02a9f3aa5daa14c578745`。SDK/lwIP 分别是公开维护 fork `855937cf9dcee13ee9c423fb0319238cdc8d53fd` / `2758df4cd3666b3b2a5b53830148379326425c0d`，WAMR 是 `a34d721b630213f59fde0b40cebbb980903660e8`。Base 在 `56bf135` 之后的固件变化只有 MQTT owner 过期事件修复；仓外复制工程已经包含该文件。使用同一官方 `qemu-riscv32` 9.2.2 和上述 64 KiB counter guest，继续保留 Classic/Normal loader、指令计量及 4 KiB WAMR 管理 heap、4 KiB 栈、8 KiB pthread 栈。
+
+仓外工程从[当前静态五组件链接原型](five-component-capacity-probe.md)复制，额外仅加入上文的 `capacity_runtime_probe.c`、64 KiB guest 字节、QEMU ADC2 校准空实现和两处调用：首次在 Base 初始化前，第二次在 `ESP_BASE_READY` 后。控制台改为 UART0 主/USB 次；原 `capacity_references.c` 仍只在不可运行的 `volatile` 分支内保留 FRP、MQTT、OTA、Container 和 WAMR 链接路径。`esp_base.map` 再次核对 `efrp_tls_step`、`esp_mqtt_client_start`、`eota_preflight`、`econtainer_runtime_open` 与 `wasm_interp_call_wasm`。仓外测试 RSA-3072 键生成的签名镜像大小 `0x121000`，SHA-256 `eca77147bbc1a938e0194dab3af28ea3e987339e147bf606bd1bad7373c81b2c`，`espsecure verify-signature --version 2` 第 0 块 RSA 验证通过。QEMU 从合并的 4 MiB Flash 镜像启动并输出 `ESP_BASE_READY`；QEMU 的 ADC2 临时空实现意味着该镜像**不可刷实板**。
+
+| 阶段 | 8-bit free 字节 | 最大连续块字节 | 启动以来低水位字节 |
+| --- | ---: | ---: | ---: |
+| Base 初始化前、首次 `open` 前 | 154,016 | 114,688 | 154,016 |
+| 首次 guest 存活、`on_event` 后 | 72,136 | 40,960 | 72,136 |
+| 首次 `close` 后、pthread 尚未回收 | 153,912 | 114,688 | 72,136 |
+| `ESP_BASE_READY` 后 | 104,800 | 94,208 | 49,652 |
+| 第二次 `open` 前、pthread 已创建 | 96,436 | 86,016 | 49,652 |
+| 第二次 guest 存活、`on_event` 后 | 14,660 | 7,680 | 14,660 |
+| 第二次 `close` 后、pthread 尚未回收 | 96,436 | 86,016 | 14,660 |
+| pthread 回收后 | 104,800 | 94,208 | 14,660 |
+
+两次都输出 `open=0 init=0 event=0 stop=0 guest=3`。第二次在 guest 存活时最大连续块仅 7,680 字节，比旧 Base 链接切片明显更紧；这是**无 Wi-Fi 配置、无 FRPS/Broker 连接、无 OTA 下载**时的测量。QEMU 的 Wi-Fi 校准与真实射频、网络/TLS 并发和实板堆布局不同，不能据此宣布 64 KiB profile 可交付，更不能冻结三包槽、业务尺寸或触发分区迁移。P6-03 仍未验收，后续需在实际装配和负载下测量最小 free heap、最大连续块与分配失败。
+
 ## 后续边界
 
 真实 C3 板卡、ADC2 校准、Wi-Fi 连接与 TLS、FRPS/Broker 并发、已签名组合镜像、业务包 Flash 安装与三槽保护、持续运行及分区迁移尚未覆盖。完成 P6-03 仍须用实际五能力装配和真实网络负载测量峰值 heap、最大连续块、栈、socket/计时器，并核对 4 MiB 分区与保留身份数据。此次仿真结果不授权设备写入，也不要求修改既有 guest 限额或删减安全能力。
