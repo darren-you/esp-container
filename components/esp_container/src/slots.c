@@ -739,7 +739,8 @@ econtainer_slots_result_t econtainer_slots_write_and_prepare(
         const slot_reader_t reader = {io,
             geometry->slots[current.operation.slot].offset_bytes,
             current.operation.package_size_bytes};
-        if (!validate_fn(validate_context, flash_relative_read, (void *)&reader,
+        if (!validate_fn(validate_context, &current.operation,
+                         flash_relative_read, (void *)&reader,
                          current.operation.package_size_bytes)) {
             result = ECONTAINER_SLOTS_UNTRUSTED;
         }

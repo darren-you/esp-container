@@ -6,6 +6,7 @@ add_library(esp_container STATIC
     components/esp_container/src/wasm_scan.c
     components/esp_container/src/package_wasm.c
     components/esp_container/src/package_stream.c
+    components/esp_container/src/package_slot.c
     components/esp_container/src/package_crypto.c
     components/esp_container/src/slots.c)
 target_include_directories(esp_container PUBLIC components/esp_container/include)
@@ -36,6 +37,12 @@ if(BUILD_TESTING)
     target_link_libraries(slots_test PRIVATE esp_container)
     target_compile_options(slots_test PRIVATE -Wall -Wextra -Werror -Wconversion -UNDEBUG)
     add_test(NAME slots COMMAND slots_test)
+    add_executable(package_slot_test tests/package_slot_test.c)
+    target_link_libraries(package_slot_test PRIVATE esp_container)
+    target_compile_options(package_slot_test PRIVATE -Wall -Wextra -Werror -Wconversion -UNDEBUG)
+    add_test(NAME package_slot
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/package_slot_test.py"
+                "$<TARGET_FILE:package_slot_test>")
     add_executable(slots_idf_test
         components/esp_container/src/slots_idf.c tests/slots_idf_test.c)
     target_include_directories(slots_idf_test PRIVATE

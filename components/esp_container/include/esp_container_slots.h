@@ -120,8 +120,13 @@ typedef bool (*econtainer_slot_read_fn)(void *context, size_t relative_offset_by
                                          uint8_t *destination, size_t size_bytes);
 typedef bool (*econtainer_slot_source_fn)(void *context, size_t relative_offset_bytes,
                                            uint8_t *destination, size_t size_bytes);
-/* Must verify the readback package signature, Wasm/profile, product authorization and grant. */
+/*
+ * The operation is the exact durable reservation read under the slot lock.
+ * Validate against it, not a separately held copy that may have changed.
+ * Must verify signature, Wasm/profile, product authorization and grant.
+ */
 typedef bool (*econtainer_slot_validate_fn)(void *context,
+                                             const econtainer_slot_operation_t *operation,
                                              econtainer_slot_read_fn read_fn,
                                              void *read_context,
                                              size_t package_size_bytes);

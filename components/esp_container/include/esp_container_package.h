@@ -28,14 +28,24 @@ typedef struct {
 typedef struct {
     size_t package_size_bytes;
     size_t manifest_size_bytes;
+    /* Identifier slices refer to workspace->manifest while it remains intact. */
+    size_t product_id_offset_bytes;
+    size_t product_id_size_bytes;
+    size_t product_version_offset_bytes;
+    size_t product_version_size_bytes;
     size_t wasm_offset_bytes;
     size_t wasm_size_bytes;
     uint8_t wasm_sha256[32];
     uint8_t package_sha256[32];
     /* Signed requests only. None of these fields grants device permissions. */
     uint32_t guest_abi_version;
+    uint32_t data_schema_version;
     uint32_t memory_limit_bytes;
     uint32_t stack_limit_bytes;
+    uint32_t event_queue_limit;
+    uint32_t instruction_budget;
+    uint32_t host_call_timeout_ms;
+    uint32_t storage_limit_bytes;
     uint32_t requested_capabilities;
     bool has_unknown_capability;
     bool is_classic_profile;

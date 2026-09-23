@@ -216,13 +216,15 @@ static bool source_read(void *context, size_t offset_bytes,
     return true;
 }
 
-static bool validate_readback(void *context, econtainer_slot_read_fn read_fn,
+static bool validate_readback(void *context, const econtainer_slot_operation_t *operation,
+                              econtainer_slot_read_fn read_fn,
                               void *read_context, size_t size_bytes)
 {
     fixture_t *fixture = context;
     uint8_t chunk[97];
     fixture->validation_called = true;
-    if (fixture->reject_validation || size_bytes != fixture->length) {
+    if (fixture->reject_validation || size_bytes != fixture->length ||
+        operation->package_size_bytes != fixture->length) {
         return false;
     }
     for (size_t offset = 0; offset < size_bytes; offset += sizeof(chunk)) {

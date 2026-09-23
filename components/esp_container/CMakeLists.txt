@@ -1,5 +1,5 @@
 idf_component_register(SRCS "src/wasm_scan.c" "src/package_wasm.c" "src/runtime.c"
-    "src/package_stream.c" "src/package_crypto.c" "src/slots.c" "src/slots_idf.c"
+    "src/package_stream.c" "src/package_slot.c" "src/package_crypto.c" "src/slots.c" "src/slots_idf.c"
     INCLUDE_DIRS "include" PRIV_INCLUDE_DIRS "src"
     REQUIRES esp_partition freertos
     PRIV_REQUIRES wasm-micro-runtime esp_timer mbedtls nvs_flash)

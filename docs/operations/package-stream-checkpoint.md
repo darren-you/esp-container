@@ -2,7 +2,9 @@
 
 `esp_container_package_verify()` 接受由调用方提供的只读随机访问回调、精确包长、独立信任的 RSA-3072 PKCS#1 `RSAPublicKey` DER 公钥与对应 `signing_key_id`。组件每次最多读取 512 字节；调用方提供 4096 字节 manifest、384 字节签名和 512 字节读取块工作区，设备不把整包复制到 RAM。失败时结果清零。当前 512 KiB Wasm 编译上限只是原 host 原型的临时拒绝边界，不能当作 4 MiB C3 的已验证包槽预算。
 
-验包成功后，`econtainer_package_info_t` 除包摘要与 Wasm 偏移外，还返回已签名的 `guest_abi_version`、Classic profile 判定、内存/栈需求和能力声明。它们**只是包的请求**。`econtainer_package_wasm_check()` 必须使用相同、稳定的包字节和上一步的 info，同时接收平台独立提供的 `econtainer_wasm_authorization_t`；把 info 中的能力或资源请求直接复制成授权会使检查失效。接口每次读取最多 512 字节，不分配整包或整份 Wasm 的 RAM，不写入存储，也不启动 guest。
+验包成功后，`econtainer_package_info_t` 除包摘要与 Wasm 偏移外，还返回已签名的 `guest_abi_version`、`data_schema_version`、Classic profile、全部六项资源请求和能力声明；产品 ID/版本以 `workspace->manifest` 中的有界偏移和长度提供，只有在该 workspace 保持原样时有效。它们**只是包的请求**。`econtainer_package_wasm_check()` 必须使用相同、稳定的包字节和上一步的 info，同时接收平台独立提供的 `econtainer_wasm_authorization_t`；把 info 中的能力或资源请求直接复制成授权会使检查失效。接口每次读取最多 512 字节，不分配整包或整份 Wasm 的 RAM，不写入存储，也不启动 guest。
+
+`econtainer_package_slot_validate()` 是三槽 `write_and_prepare` 的真实候选回读回调。三槽引擎先比对完整包 SHA-256，再在同一共享锁下从候选 Flash 回读，验签并重新扫描 Wasm；回调将已签名产品 ID 与平台授权产品比较，将包摘要、ABI 和数据 schema 与持久候选操作比较，并将队列、指令、宿主期限和存储请求与调用方独立限额比较。内存、栈与能力继续由 Wasm 检查器比较；失败不进入 PREPARED，输出 info 清零。产品版本通过精确包摘要绑定，回调不将该字段解释为安装授权。测试用真实临时 RSA 签名包、假 Flash/NVS 和多项授权负例覆盖此组合。
 
 解析器只接受 host `product_package.py` 生成的规范无压缩 ustar：固定三成员与顺序，逐字节固定 header，零填充、两个结束块与精确 10 KiB record 长度。manifest 按规范 JSON 的固定键顺序和类型读取，拒绝重复/未知字段、非规范编码、越界整数、非小写十六进制摘要和不匹配的 key ID。签名覆盖 `ESP-CONTAINER-PRODUCT-V1\0` 与 manifest 精确字节，RSA-PSS 固定 SHA-256、MGF1-SHA-256、32 字节 salt；公钥不从包中读取。Wasm 按块计算 SHA-256，核对清单长度和摘要；整个归档也按流计算 SHA-256，供上层绑定请求。
 
@@ -14,4 +16,4 @@ host 测试由主机打包器生成真实临时签名包，以另一个公钥、
 
 固定公开 ESP-IDF fork `855937cf9dcee13ee9c423fb0319238cdc8d53fd` 与公开 lwIP `2758df4cd3666b3b2a5b53830148379326425c0d` 的 C3 样例完成编译。独立临时链接/运行探针在仓外生成 10,240 字节测试签名包、临时 RSA-3072 测试公钥和错误 salt 签名，再临时嵌入样例；官方 Espressif QEMU 9.2.2 的二进制 SHA-256 为 `3e38982c1ea3e750edfc8c910a0fd44727fe07d9c666b84d18d2b7985ac58246`。设备端 PSA 路径回报 `package_pss_positive=0 wrong_salt=2`，分别对应验包通过与不可信签名；同次 WAMR 样例回报 `normal=1 instruction_limit=1`。临时镜像大小为 `0x4f620`、SHA-256 为 `76bea69cbe66970eef1d4fa8f1184b5e6271ac03b13bf275127e2b41f9934704`。独立样例不链接验包入口时镜像为 `0x390d0`；这约 90 KiB 的差值只反映该独立链接探针，不能直接外推五组件增量或正式分区余量。测试包、公钥与入口改动均未进入仓库提交。
 
-这两个只读 API 本身不安装或启动业务。QEMU 正向测试读取的是临时镜像内的常量包，不是 Flash 包槽。P6-06 仍需在 P6-03/P7-01 确定的真实候选包槽上实现写入后稳定 Flash 回读，并阻止验包、扫描与激活之间的内容变化；还需核对产品、操作、其余资源配额和数据 schema，完成状态原子提交。没有这些步骤时，不得把验包及静态检查返回 `OK` 当作安装授权或业务可运行证据。
+只读验包和静态检查本身不安装或启动业务。QEMU 正向测试读取的是临时镜像内的常量包；新增回读接线在假 Flash 上运行，尚未接当前 Base 的真实包分区。P6-06 仍需在 P6-03/P7-01 确定的真实候选包槽和 Base 共享锁下验证稳定 Flash 字节、独立可信产品授权、签名 key 来源、所有写入者排他及激活前内容绑定；宿主调用期限等请求还须由实际运行期执行，不能因准入时比较数值就宣称墙钟约束已生效。没有完整装配时不得把 PREPARED 当作业务可运行或设备安全启动。

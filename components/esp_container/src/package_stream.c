@@ -17,8 +17,17 @@ typedef struct {
     uint32_t wasm_size_bytes;
     uint8_t wasm_sha256[32];
     uint32_t guest_abi_version;
+    uint32_t data_schema_version;
     uint32_t memory_limit_bytes;
     uint32_t stack_limit_bytes;
+    uint32_t event_queue_limit;
+    uint32_t instruction_budget;
+    uint32_t host_call_timeout_ms;
+    uint32_t storage_limit_bytes;
+    size_t product_id_offset_bytes;
+    size_t product_id_size_bytes;
+    size_t product_version_offset_bytes;
+    size_t product_version_size_bytes;
     uint32_t requested_capabilities;
     bool has_unknown_capability;
     bool is_classic_profile;
@@ -203,21 +212,26 @@ static bool parse_manifest(const uint8_t *data, size_t size_bytes, const char *e
     const uint8_t *identifier = NULL;
     size_t identifier_size = 0;
     if (!json_literal(&json, "{") ||
-        !json_number_key(&json, "data_schema_version", false, &number) ||
+        !json_number_key(&json, "data_schema_version", false,
+                         &manifest->data_schema_version) ||
         !json_literal(&json, ",") ||
         !json_number_key(&json, "guest_abi_version", false, &manifest->guest_abi_version) ||
         !json_literal(&json, ",\"limits\":{") ||
-        !json_number_key(&json, "event_queue_limit", false, &number) ||
+        !json_number_key(&json, "event_queue_limit", false,
+                         &manifest->event_queue_limit) ||
         !json_literal(&json, ",") ||
-        !json_number_key(&json, "host_call_timeout_ms", false, &number) ||
+        !json_number_key(&json, "host_call_timeout_ms", false,
+                         &manifest->host_call_timeout_ms) ||
         !json_literal(&json, ",") ||
-        !json_number_key(&json, "instruction_budget", false, &number) ||
+        !json_number_key(&json, "instruction_budget", false,
+                         &manifest->instruction_budget) ||
         !json_literal(&json, ",") ||
         !json_number_key(&json, "memory_limit_bytes", false, &manifest->memory_limit_bytes) ||
         !json_literal(&json, ",") ||
         !json_number_key(&json, "stack_limit_bytes", false, &manifest->stack_limit_bytes) ||
         !json_literal(&json, ",") ||
-        !json_number_key(&json, "storage_limit_bytes", true, &number) ||
+        !json_number_key(&json, "storage_limit_bytes", true,
+                         &manifest->storage_limit_bytes) ||
         !json_literal(&json, "},") ||
         !json_number_key(&json, "package_format_version", false, &number) || number != 1 ||
         !json_literal(&json, ",\"payload\":{") ||
@@ -229,10 +243,18 @@ static bool parse_manifest(const uint8_t *data, size_t size_bytes, const char *e
         !json_number_key(&json, "size_bytes", false, &manifest->wasm_size_bytes) ||
         manifest->wasm_size_bytes < 8 || manifest->wasm_size_bytes > max_wasm_bytes ||
         !json_literal(&json, "},") ||
-        !json_identifier_value(&json, "product_id", &identifier, &identifier_size) ||
-        !json_literal(&json, ",") ||
-        !json_identifier_value(&json, "product_version", &identifier, &identifier_size) ||
-        !json_literal(&json, ",") ||
+        !json_identifier_value(&json, "product_id", &identifier, &identifier_size)) {
+        return false;
+    }
+    manifest->product_id_offset_bytes = (size_t)(identifier - data);
+    manifest->product_id_size_bytes = identifier_size;
+    if (!json_literal(&json, ",") ||
+        !json_identifier_value(&json, "product_version", &identifier, &identifier_size)) {
+        return false;
+    }
+    manifest->product_version_offset_bytes = (size_t)(identifier - data);
+    manifest->product_version_size_bytes = identifier_size;
+    if (!json_literal(&json, ",") ||
         !json_caps(&json, manifest) ||
         !json_literal(&json, ",") ||
         !json_runtime_profile(&json, manifest) ||
@@ -498,12 +520,21 @@ econtainer_package_result_t econtainer_package_verify(
     }
     info->manifest_size_bytes = manifest_size_bytes;
     info->package_size_bytes = package_size_bytes;
+    info->product_id_offset_bytes = manifest.product_id_offset_bytes;
+    info->product_id_size_bytes = manifest.product_id_size_bytes;
+    info->product_version_offset_bytes = manifest.product_version_offset_bytes;
+    info->product_version_size_bytes = manifest.product_version_size_bytes;
     info->wasm_offset_bytes = wasm_offset_bytes;
     info->wasm_size_bytes = member_size;
     memcpy(info->wasm_sha256, actual_wasm_sha256, sizeof(info->wasm_sha256));
     info->guest_abi_version = manifest.guest_abi_version;
+    info->data_schema_version = manifest.data_schema_version;
     info->memory_limit_bytes = manifest.memory_limit_bytes;
     info->stack_limit_bytes = manifest.stack_limit_bytes;
+    info->event_queue_limit = manifest.event_queue_limit;
+    info->instruction_budget = manifest.instruction_budget;
+    info->host_call_timeout_ms = manifest.host_call_timeout_ms;
+    info->storage_limit_bytes = manifest.storage_limit_bytes;
     info->requested_capabilities = manifest.requested_capabilities;
     info->has_unknown_capability = manifest.has_unknown_capability;
     info->is_classic_profile = manifest.is_classic_profile;
