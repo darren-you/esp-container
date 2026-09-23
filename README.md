@@ -20,7 +20,7 @@ flowchart LR
     base["esp-base：未来的平台装配与持久授权"] -.-> scanner
 ```
 
-IDF 组件物理路径为 `components/esp_container`，其名称与仓库 `esp-container` 属不同命名空间。公开 Git 消费方须把完整提交 SHA 和 `path: components/esp_container` 写入 `idf_component.yml`。WAMR 由该组件的 manifest 固定到[公开维护 fork](docs/design/source-provenance.md) 的完整修复提交；[SDK 锁](components/esp_container/sdk-lock.json)固定 IDF/lwIP 源码，组件构建核对锁定组合。组件配置还要求 Classic/Normal loader、指令计量，并拒绝 WAMR 默认开启的 AOT/Fast/WASI/guest pthread 等特性；消费者按[C3 样例](examples/c3-runtime/README.md)在 `project()` 前设置计量/bulk/shared memory，且在 `sdkconfig.defaults` 设置 WAMR Kconfig。独立样例不读取相邻工作区、私有 Tool 或生产凭据。
+IDF 组件物理路径为 `components/esp_container`，其名称与仓库 `esp-container` 属不同命名空间。公开 Git 消费方须把完整提交 SHA 和 `path: components/esp_container` 写入 `idf_component.yml`。WAMR 由该组件的 manifest 固定到[公开维护 fork](docs/design/source-provenance.md) 的完整修复提交；[SDK 锁](components/esp_container/sdk-lock.json)固定公开 ESP-IDF fork `855937cf9dcee13ee9c423fb0319238cdc8d53fd` 与 lwIP 源码，组件构建核对锁定组合。组件配置还要求 Classic/Normal loader、指令计量，并拒绝 WAMR 默认开启的 AOT/Fast/WASI/guest pthread 等特性；消费者按[C3 样例](examples/c3-runtime/README.md)在 `project()` 前设置计量/bulk/shared memory，且在 `sdkconfig.defaults` 设置 WAMR Kconfig。独立样例不读取相邻工作区、私有 Tool 或生产凭据。
 
 ## 本机验证
 
