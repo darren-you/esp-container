@@ -26,7 +26,9 @@
 
 在独立 checkout 中，固定 wasi-sdk 33 的 Python unittest 18/18 通过；锁定 WAMR `a34d721b630213f59fde0b40cebbb980903660e8` 的普通及 ASan/UBSan CTest 均为 3/3 通过。真实 guest 覆盖逐项拒绝未授权导入、日志复制后原事件缓冲改写、短目标缓冲保留、队列满、长度超限、非法地址异常、单调时间以及关闭重开不继承日志；包工具用测试键验证导入需求必须进入签名 manifest。
 
-当前 SDK 锁是公开 ESP-IDF fork `855937cf9dcee13ee9c423fb0319238cdc8d53fd`、esp-lwip `2758df4cd3666b3b2a5b53830148379326425c0d`。独立 checkout 在这组源码与 WAMR fork 下完成 C3 原样样例构建，镜像大小 `0x39170` 字节、SHA-256 为 `d70de72efbdb9438299f3ce4d8d2877ab29f9fbf640a8f30fef148533e3bb204`；原样样例尚未强制链接或执行新私有宿主导入。
+此前使用公开 ESP-IDF fork `855937cf9dcee13ee9c423fb0319238cdc8d53fd`、esp-lwip `2758df4cd3666b3b2a5b53830148379326425c0d` 的独立 checkout，在这组源码与 WAMR fork 下完成 C3 原样样例构建，镜像大小 `0x39170` 字节、SHA-256 为 `d70de72efbdb9438299f3ce4d8d2877ab29f9fbf640a8f30fef148533e3bb204`；原样样例尚未强制链接或执行新私有宿主导入。
+
+当前组件 SDK 锁升级至公开 ESP-IDF fork `578cf89c343e388db43ba1f4ddcd602fedcb763c`，直接承接上述旧提交并修复 HTTP 客户端初始化失败时的传输句柄泄漏；lwIP 和 WAMR 精确提交不变。`check_sdk.py` 核对独立 IDF/lwIP 检出通过；固定 wasi-sdk 33 的 Python unittest 18/18、普通主机 CTest 8/8 通过。新建构建目录下的 C3 原样样例完整编译链接通过，app 镜像 `0x39360` 字节，SHA-256 `af85f6251f2b571154eb6d3671d45079e93a86dd70f1a55425285640ebb50ba7`。该样例不调用 HTTP 客户端，也没有重新运行定时器 QEMU 或实板测试；此处只证明 Container 与新版 SDK 源码组合可构建。
 
 此前在官方 ESP-IDF `fff9895c82d744c7237be8847347bdd1b07c6643` 加同一 lwIP/WAMR 的软件检查中，临时于样例 `main.c` 嵌入 690 字节测试 guest，仿真后恢复原文件；测试镜像 SHA-256 为 `2a6536da56db7466ff6eadbf9d77c08294dec8b82150c86fc40ac2f81583ac22`。官方 Espressif QEMU 9.2.2 的 C3 串口记录为 `host-api open=0 init=0 log=0 log_size=4 event=0 result=0 stop=0`，旧指令预算探针仍为 `normal=1 instruction_limit=1`。日志保存在仓外 `/tmp/esp-container-host-abi-qemu-final.log`；该运行结果属于原 SDK 基线，不能替代当前 fork SDK 的私有导入真运行。
 

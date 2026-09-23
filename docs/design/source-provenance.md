@@ -5,7 +5,7 @@
 | 来源 | 精确版本 | 用途 | 本仓保留范围 | 许可 |
 | --- | --- | --- | --- | --- |
 | [WAMR 公开维护 fork](https://github.com/darren-you/wasm-micro-runtime) | `a34d721b630213f59fde0b40cebbb980903660e8`，直接父提交为[官方 WAMR-2.4.4](https://github.com/wasm-micro-runtime/wasm-micro-runtime/tree/8c18e3f68b16c4bcaf05996b2636f6ed2b4cf629) `8c18e3f68b16c4bcaf05996b2636f6ed2b4cf629` | ESP-IDF 组件依赖、Classic Interpreter 与指令计量 | 不复制源码；由 IDF Component Manager 从公开 fork 按完整 SHA 获取 | Apache-2.0 WITH LLVM-exception |
-| [ESP-IDF 公开维护 fork](https://github.com/darren-you/esp-idf) | `855937cf9dcee13ee9c423fb0319238cdc8d53fd`；官方父提交 `fff9895c82d744c7237be8847347bdd1b07c6643`，仅修复 OTA 擦除失败句柄泄漏 | C3 工具链与固件 SDK | 不复制源码；独立 SDK checkout | Apache-2.0 等，依上游各文件 |
+| [ESP-IDF 公开维护 fork](https://github.com/darren-you/esp-idf) | `578cf89c343e388db43ba1f4ddcd602fedcb763c`；直接父提交 `855937cf9dcee13ee9c423fb0319238cdc8d53fd`，官方祖先提交 `fff9895c82d744c7237be8847347bdd1b07c6643`；修复 OTA 擦除失败和 HTTP 客户端初始化失败时的传输句柄泄漏 | C3 工具链与固件 SDK | 不复制源码；独立 SDK checkout | Apache-2.0 等，依上游各文件 |
 | [esp-lwip](https://github.com/darren-you/esp-lwip) | `2758df4cd3666b3b2a5b53830148379326425c0d` | 目标组合的 SDK lwIP 修正 | 不复制源码；随锁定 IDF checkout | 见该仓许可 |
 | [wasi-sdk 33](https://github.com/WebAssembly/wasi-sdk/releases/tag/wasi-sdk-33) | macOS arm64 资产 SHA-256 `85c997a2665ead91673b5bb88b7d0df3fc8900df3bfa244f720d478187bbdc78`；`VERSION=33.0+m`，LLVM `4434dabb6991` | counter guest 的 freestanding Wasm 编译 | 工具链放在仓外；仓内只保留编译命令、版本核对和输出检查 | 见上游各组件许可 |
 
