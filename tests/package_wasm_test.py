@@ -23,8 +23,9 @@ import product_package as pkg  # noqa: E402
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = json.loads((ROOT / "examples/counter/spec.example.json").read_text())
 HEADER = b"\0asm\x01\0\0\0"
-TYPES = (b"\x03\x60\x00\x01\x7f\x60\x02\x7f\x7f\x01\x7f"
-         b"\x60\x00\x01\x7e")
+TYPES = (b"\x05\x60\x00\x01\x7f\x60\x02\x7f\x7f\x01\x7f"
+         b"\x60\x00\x01\x7e\x60\x02\x7f\x7f\x01\x7e"
+         b"\x60\x01\x7e\x01\x7f")
 
 
 def leb(number: int) -> bytes:
@@ -50,7 +51,8 @@ def module(imports: tuple[str, ...] = (), *, event_type: int = 1,
            memory_flags: int = 1, memory_max: int = 2,
            duplicate_export: bool = False, code_count: int = 3,
            extra: bytes = b"") -> bytes:
-    type_by_name = {"monotonic_ms": 2, "log": 1}
+    type_by_name = {"monotonic_ms": 2, "log": 1,
+                    "timer_start": 3, "timer_cancel": 4}
     imported = (leb(len(imports)) + b"".join(
         name("econtainer") + name(field) + b"\0" + leb(type_by_name.get(field, 2))
         for field in imports)) if imports else b""
@@ -148,6 +150,24 @@ def main() -> None:
         run(both, both_spec, grant=1, expected=3)
         run(both, both_spec, max_memory=65536, expected=3)
         run(both, SPEC, expected=1)
+        timer = module(("timer_start", "timer_cancel"))
+        timer_spec = copy.deepcopy(SPEC)
+        timer_spec["required_capabilities"] = ["timer"]
+        assert pkg._wasm(timer) == frozenset({"timer"})
+        pkg.create_manifest(timer_spec, timer)
+        run(timer, timer_spec, grant=4)
+        run(module(("timer_start",)), timer_spec, grant=4)
+        run(module(("timer_cancel",)), timer_spec, grant=4)
+        run(timer, timer_spec, grant=0, expected=3)
+        run(timer, SPEC, grant=4, expected=1)
+        wrong_timer = timer.replace(name("timer_start") + b"\0\x03",
+                                    name("timer_start") + b"\0\x04")
+        try:
+            pkg._wasm(wrong_timer)
+            raise AssertionError("host accepted a wrong timer signature")
+        except pkg.PackageError:
+            pass
+        run(wrong_timer, timer_spec, grant=4, expected=2)
         too_little_memory = copy.deepcopy(SPEC)
         too_little_memory["limits"]["memory_limit_bytes"] = 65536
         run(none, too_little_memory, expected=1)
@@ -168,6 +188,7 @@ def main() -> None:
             module(event_type=0), module(memory_flags=3),
             module(memory_flags=0), module(duplicate_export=True),
             module(("log", "log")),
+            module(("timer_start", "timer_start")),
             module(extra=b"\x08\x01\0"),
             module(extra=b"\x0a\x01\0"),
             module(extra=b"\x01\x80"),
@@ -186,7 +207,7 @@ def main() -> None:
                 pass
             with_index = f"{index}: {wasm.hex()[:40]}"
             try:
-                run(wasm, expected=2 if index in (3, 4, 5, 10, 11, 13) else 1)
+                run(wasm, expected=2 if index in (3, 4, 5, 6, 11, 12, 14) else 1)
             except AssertionError as exc:
                 raise AssertionError(with_index) from exc
 
@@ -205,10 +226,13 @@ def main() -> None:
                             "--wasi-sdk", sdk, "--output-dir", str(fixtures)], check=True)
             counter = (fixtures / "counter.wasm").read_bytes()
             host_api = (fixtures / "host-api.wasm").read_bytes()
+            timer_guest = (fixtures / "timer.wasm").read_bytes()
             assert pkg._wasm(counter) == frozenset()
             assert pkg._wasm(host_api) == frozenset({"log", "monotonic-time"})
+            assert pkg._wasm(timer_guest) == frozenset({"timer"})
             run(counter)
             run(host_api, both_spec)
+            run(timer_guest, timer_spec, grant=4)
     print("package_wasm: host/device import matrix, ABI, malformed structure, grant and read faults passed")
 
 

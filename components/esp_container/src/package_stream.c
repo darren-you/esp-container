@@ -154,12 +154,16 @@ static bool json_caps(econtainer_json_t *json, econtainer_manifest_t *manifest)
         }
         static const char clock_cap[] = "monotonic-time";
         static const char log_cap[] = "log";
+        static const char timer_cap[] = "timer";
         if (current_size == sizeof(clock_cap) - 1U &&
             memcmp(current, clock_cap, current_size) == 0) {
             manifest->requested_capabilities |= ECONTAINER_CAP_MONOTONIC_TIME;
         } else if (current_size == sizeof(log_cap) - 1U &&
                    memcmp(current, log_cap, current_size) == 0) {
             manifest->requested_capabilities |= ECONTAINER_CAP_LOG;
+        } else if (current_size == sizeof(timer_cap) - 1U &&
+                   memcmp(current, timer_cap, current_size) == 0) {
+            manifest->requested_capabilities |= ECONTAINER_CAP_TIMER;
         } else {
             manifest->has_unknown_capability = true;
         }

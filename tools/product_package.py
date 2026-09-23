@@ -158,13 +158,16 @@ def _wasm_imports(types_data: bytes, imports_data: bytes) -> frozenset[str]:
 
     offset = 0
     count, offset = _wasm_u32(imports_data, offset, len(imports_data))
-    if count > 2:
+    if count > 4:
         raise PackageError("不允许的 Wasm imports 数量")
     required: set[str] = set()
     expected = {
         b"monotonic_ms": (b"", b"\x7e", "monotonic-time"),
         b"log": (b"\x7f\x7f", b"\x7f", "log"),
+        b"timer_start": (b"\x7f\x7f", b"\x7e", "timer"),
+        b"timer_cancel": (b"\x7e", b"\x7f", "timer"),
     }
+    seen: set[bytes] = set()
     for _ in range(count):
         names = []
         for _part in range(2):
@@ -181,8 +184,9 @@ def _wasm_imports(types_data: bytes, imports_data: bytes) -> frozenset[str]:
             raise PackageError("不允许的 Wasm imports")
         type_index, offset = _wasm_u32(imports_data, offset, len(imports_data))
         params, results, capability = expected[names[1]]
-        if type_index >= len(types) or types[type_index] != (params, results) or capability in required:
+        if type_index >= len(types) or types[type_index] != (params, results) or names[1] in seen:
             raise PackageError("Wasm imports 签名或重复项错误")
+        seen.add(names[1])
         required.add(capability)
     if offset != len(imports_data):
         raise PackageError("非法 Wasm imports 尾部")

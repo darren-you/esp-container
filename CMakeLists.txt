@@ -94,11 +94,13 @@ if(BUILD_TESTING)
                 "${runtime_guests_dir}/stop-fail.wasm"
                 "${runtime_guests_dir}/wrong-signature.wasm")
             list(APPEND runtime_guests "${runtime_guests_dir}/host-api.wasm")
+            list(APPEND runtime_guests "${runtime_guests_dir}/timer.wasm")
             add_custom_command(OUTPUT ${runtime_guests}
                 COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/build_runtime_guests.py"
                     --wasi-sdk "${ESP_CONTAINER_WASI_SDK_ROOT}"
                     --output-dir "${runtime_guests_dir}"
                 DEPENDS tests/build_runtime_guests.py tests/runtime_guest.c tests/host_api_guest.c
+                    tests/timer_guest.c
                     tools/counter_guest.py examples/counter/counter.c
                     guest-sdk/include/econtainer_guest.h
                 VERBATIM)

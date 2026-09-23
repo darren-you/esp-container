@@ -66,6 +66,12 @@ def main() -> int:
         "-o", str(args.output_dir / "host-api.wasm"),
     ]
     subprocess.run(host_command, check=True)
+    timer_command = host_command.copy()
+    timer_command[timer_command.index(str(ROOT / "tests" / "host_api_guest.c"))] = str(
+        ROOT / "tests" / "timer_guest.c"
+    )
+    timer_command[-1] = str(args.output_dir / "timer.wasm")
+    subprocess.run(timer_command, check=True)
     return 0
 
 

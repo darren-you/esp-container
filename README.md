@@ -1,6 +1,6 @@
 # ESP Container
 
-`esp-container` 是面向 ESP-IDF 的业务包运行组件。当前提供独立 `esp_container` IDF 组件、受限 Wasm 扫描器、counter guest 的固定 freestanding 构建与静态检查、公开 guest SDK 草案、确定性 ustar 打包与 RSA-3072/PSS 验包工具、只读回调式设备验包及 Wasm ABI/能力检查切片、三槽原始 Flash 存储软件切片、双固件集合对账、精确分区前置的 ESP-IDF Flash/NVS provider，以及组件私有的 WAMR Classic 单实例运行切片。三槽候选的回读验证现在可组合签名包、Wasm 与独立产品/配额授权；该私有运行切片增加逐项授权的单调时间和有界日志导入。实际专用包分区、完整签名包安装、Base 联合升级与实板容量尚未完成，当前代码只可作为研发检查点。
+`esp-container` 是面向 ESP-IDF 的业务包运行组件。当前提供独立 `esp_container` IDF 组件、受限 Wasm 扫描器、counter guest 的固定 freestanding 构建与静态检查、公开 guest SDK 草案、确定性 ustar 打包与 RSA-3072/PSS 验包工具、只读回调式设备验包及 Wasm ABI/能力检查切片、三槽原始 Flash 存储软件切片、双固件集合对账、精确分区前置的 ESP-IDF Flash/NVS provider，以及组件私有的 WAMR Classic 单实例运行切片。三槽候选的回读验证现在可组合签名包、Wasm 与独立产品/配额授权；该私有运行切片增加逐项授权的单调时间、有界日志和受配额定时器导入。实际专用包分区、完整签名包安装、Base 联合升级与实板容量尚未完成，当前代码只可作为研发检查点。
 
 ## 架构拓扑
 
@@ -23,7 +23,7 @@ flowchart LR
     idf_provider --> idf_storage["ESP-IDF esp_partition / NVS"]
     scanner --> runtime["组件私有单实例运行 API：ABI / 事件复制 / 生命周期"]
     sdk["guest-sdk：精确导入声明"] --> runtime
-    runtime --> host["单调时间 / 实例私有待取日志"]
+    runtime --> host["单调时间 / 实例私有待取日志 / 定时器"]
     runtime --> wamr["锁定 WAMR Classic：加载 / 每入口指令预算"]
     sample["examples/c3-runtime：独立 C3 最小工程"] --> scanner
     sample --> wamr
@@ -54,7 +54,7 @@ cmake --build build-wamr
 ctest --test-dir build-wamr --output-on-failure
 ```
 
-设置官方 wasi-sdk 33 的 `WASI_SDK_ROOT` 时，`runtime_instance` 会编译真正的 counter 和故障 guest，在锁定 WAMR 上检查单实例、事件复制、ABI、三个入口的额度、逐项导入授权、日志边界，以及各 100 次普通、原生导入与失败后重开生命周期。macOS 普通构建还核对第 10/50/100 次关闭后的堆和虚拟地址用量；没有该工具链时仍可运行其余 CTest。详见[运行切片检查点](docs/operations/single-instance-runtime-checkpoint.md)与[宿主导入检查点](docs/operations/host-api-checkpoint.md)。这些主机测试不能代替设备上的完整运行。[counter guest 样例](examples/counter/README.md)记录固定编译与静态 ABI/profile 检查入口。
+设置官方 wasi-sdk 33 的 `WASI_SDK_ROOT` 时，`runtime_instance` 会编译真正的 counter、定时器和故障 guest，在锁定 WAMR 上检查单实例、事件复制、ABI、三个入口的额度、逐项导入授权、日志边界、定时器取消与代次隔离，以及各 100 次普通、原生导入与失败后重开生命周期。macOS 普通构建还核对第 10/50/100 次关闭后的堆和虚拟地址用量；没有该工具链时仍可运行其余 CTest。详见[运行切片检查点](docs/operations/single-instance-runtime-checkpoint.md)与[宿主导入检查点](docs/operations/host-api-checkpoint.md)。这些主机测试不能代替设备上的完整运行。[counter guest 样例](examples/counter/README.md)记录固定编译与静态 ABI/profile 检查入口。
 
 host 工具的包格式和使用步骤见 [包工具](tools/README.md)。[只读流式验包与 Wasm 静态检查切片](docs/operations/package-stream-checkpoint.md)记录设备代码与 host 互验边界；静态检查必须接收验包结果及独立可信授权，签名清单只表达需求，不能自行授予设备能力。[三包槽存储检查点](docs/operations/three-slot-storage-checkpoint.md)记录保护集、commit/读回、IDF provider 与恢复软件边界。[C3 原型](examples/c3-runtime/README.md)需要固定 SDK；原样 WAMR 2.4.4 与固定 IDF 6.1 的编译问题已在公开 fork 的源码中直接修复，具体构建结果见[开发检查点](docs/operations/development-checkpoint.md)。[五组件仓外容量原型](docs/operations/five-component-capacity-probe.md)记录签名镜像与分区几何，[QEMU counter 容量切片](docs/operations/qemu-counter-capacity-probe.md)记录独立 C3 样例的动态堆采样，[五组件链接 QEMU 容量切片](docs/operations/five-component-qemu-capacity-probe.md)记录 128 KiB 失败和 64 KiB 第二候选的实测结果；这些证据均未闭合产品容量验收。本地构建不会写板。当前代码没有可发布的产品包运行/安装链路，不要把验包成功当作设备安全启动。
 

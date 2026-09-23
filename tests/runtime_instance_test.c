@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #ifdef ECONTAINER_TEST_RESOURCE_STATS
 #include <malloc/malloc.h>
 #include <mach/mach.h>
@@ -518,10 +519,135 @@ static bool test_host_api(const char *host_api_path)
     return true;
 }
 
+static bool test_timers(const char *path)
+{
+    size_t length = 0;
+    uint8_t *bytes = read_file(path, &length);
+    CHECK(bytes != NULL);
+    uint32_t imports = 0;
+    CHECK(econtainer_wasm_imported_capabilities(bytes, length, &imports));
+    CHECK(imports == ECONTAINER_CAP_TIMER);
+    econtainer_runtime_limits_t authorized = limits;
+    authorized.allowed_capabilities = ECONTAINER_CAP_TIMER;
+    authorized.max_timers = 2;
+    econtainer_runtime_t *runtime = NULL;
+    CHECK(econtainer_runtime_open(bytes, length, &limits, &runtime) ==
+          ECONTAINER_RUNTIME_NOT_AUTHORIZED);
+    authorized.max_timers = 0;
+    CHECK(econtainer_runtime_open(bytes, length, &authorized, &runtime) ==
+          ECONTAINER_RUNTIME_INVALID_INPUT);
+    authorized.max_timers = 2;
+    CHECK(econtainer_runtime_open(bytes, length, &authorized, &runtime) ==
+          ECONTAINER_RUNTIME_OK);
+    CHECK(econtainer_runtime_init(runtime) == ECONTAINER_RUNTIME_OK);
+    uint64_t deadline = 99;
+    CHECK(econtainer_runtime_next_timer_deadline(runtime, &deadline) ==
+          ECONTAINER_RUNTIME_NO_TIMER && deadline == 99);
+    const uint8_t cancel_now[] = {'B'};
+    int32_t result = -1;
+    CHECK(econtainer_runtime_on_event(runtime, cancel_now, sizeof cancel_now, &result) ==
+          ECONTAINER_RUNTIME_OK && result == 0);
+    CHECK(econtainer_runtime_next_timer_deadline(runtime, &deadline) ==
+          ECONTAINER_RUNTIME_NO_TIMER);
+    const uint8_t schedule[] = {'A'};
+    CHECK(econtainer_runtime_on_event(runtime, schedule, sizeof schedule, &result) ==
+          ECONTAINER_RUNTIME_OK && result == 0);
+    CHECK(econtainer_runtime_next_timer_deadline(runtime, &deadline) ==
+          ECONTAINER_RUNTIME_OK);
+    econtainer_timer_event_t delivered = {0};
+    CHECK(econtainer_runtime_poll_timer(runtime, &delivered, &result) ==
+          ECONTAINER_RUNTIME_NO_TIMER);
+    uint8_t forged[16] = {'E', 'C', 'T', 1};
+    CHECK(econtainer_runtime_on_event(runtime, forged, sizeof forged, &result) ==
+          ECONTAINER_RUNTIME_INVALID_INPUT);
+    struct timespec wait = {.tv_sec = 0, .tv_nsec = 40000000};
+    CHECK(nanosleep(&wait, NULL) == 0);
+    CHECK(econtainer_runtime_poll_timer(runtime, &delivered, &result) ==
+          ECONTAINER_RUNTIME_OK && result == 10 &&
+          delivered.handle != 0 && delivered.skipped_periods == 0);
+    const uint64_t one_shot = delivered.handle;
+    CHECK(econtainer_runtime_poll_timer(runtime, &delivered, &result) ==
+          ECONTAINER_RUNTIME_OK && result == 20 &&
+          delivered.handle != 0 && delivered.handle != one_shot &&
+          delivered.skipped_periods == 0);
+    const uint64_t periodic = delivered.handle;
+    CHECK(econtainer_runtime_poll_timer(runtime, &delivered, &result) ==
+          ECONTAINER_RUNTIME_NO_TIMER);
+    wait.tv_nsec = 260000000;
+    CHECK(nanosleep(&wait, NULL) == 0);
+    CHECK(econtainer_runtime_poll_timer(runtime, &delivered, &result) ==
+          ECONTAINER_RUNTIME_OK && delivered.handle == periodic &&
+          delivered.skipped_periods >= 1 &&
+          result == 20 + (int32_t)delivered.skipped_periods);
+    uint8_t cancel[9] = {'C'};
+    for (uint32_t index = 0; index < 8; ++index)
+        cancel[1 + index] = (uint8_t)(one_shot >> (index * 8));
+    CHECK(econtainer_runtime_on_event(runtime, cancel, sizeof cancel, &result) ==
+          ECONTAINER_RUNTIME_OK && result == -1);
+    for (uint32_t index = 0; index < 8; ++index)
+        cancel[1 + index] = (uint8_t)(periodic >> (index * 8));
+    CHECK(econtainer_runtime_on_event(runtime, cancel, sizeof cancel, &result) ==
+          ECONTAINER_RUNTIME_OK && result == 0);
+    CHECK(econtainer_runtime_next_timer_deadline(runtime, &deadline) ==
+          ECONTAINER_RUNTIME_NO_TIMER);
+    CHECK(econtainer_runtime_stop(runtime) == ECONTAINER_RUNTIME_OK);
+    CHECK(econtainer_runtime_poll_timer(runtime, &delivered, &result) ==
+          ECONTAINER_RUNTIME_INVALID_STATE);
+    CHECK(econtainer_runtime_close(&runtime) == ECONTAINER_RUNTIME_OK);
+    CHECK(econtainer_runtime_open(bytes, length, &authorized, &runtime) ==
+          ECONTAINER_RUNTIME_OK);
+    CHECK(econtainer_runtime_init(runtime) == ECONTAINER_RUNTIME_OK);
+    CHECK(econtainer_runtime_on_event(runtime, cancel, sizeof cancel, &result) ==
+          ECONTAINER_RUNTIME_OK && result == -1);
+    CHECK(econtainer_runtime_on_event(runtime, schedule, sizeof schedule, &result) ==
+          ECONTAINER_RUNTIME_OK && result == 0);
+    CHECK(econtainer_runtime_stop(runtime) == ECONTAINER_RUNTIME_OK);
+    CHECK(econtainer_runtime_next_timer_deadline(runtime, &deadline) ==
+          ECONTAINER_RUNTIME_INVALID_STATE);
+    CHECK(econtainer_runtime_close(&runtime) == ECONTAINER_RUNTIME_OK);
+    free(bytes);
+    return true;
+}
+
+static bool test_repeated_timer_release(const char *path)
+{
+    size_t length = 0;
+    uint8_t *bytes = read_file(path, &length);
+    CHECK(bytes != NULL);
+    econtainer_runtime_limits_t authorized = limits;
+    authorized.allowed_capabilities = ECONTAINER_CAP_TIMER;
+    authorized.max_timers = 2;
+#ifdef ECONTAINER_TEST_RESOURCE_STATS
+    resource_stats_t after_ten = {0}, after_fifty = {0}, after_hundred = {0};
+#endif
+    for (unsigned index = 0; index < 100; ++index) {
+        econtainer_runtime_t *runtime = NULL;
+        CHECK(econtainer_runtime_open(bytes, length, &authorized, &runtime) ==
+              ECONTAINER_RUNTIME_OK);
+        CHECK(econtainer_runtime_init(runtime) == ECONTAINER_RUNTIME_OK);
+        const uint8_t schedule[] = {'A'};
+        int32_t result = -1;
+        CHECK(econtainer_runtime_on_event(runtime, schedule, sizeof schedule, &result) ==
+              ECONTAINER_RUNTIME_OK && result == 0);
+        CHECK(econtainer_runtime_stop(runtime) == ECONTAINER_RUNTIME_OK);
+        CHECK(econtainer_runtime_close(&runtime) == ECONTAINER_RUNTIME_OK);
+#ifdef ECONTAINER_TEST_RESOURCE_STATS
+        if (index == 9U) CHECK(sample_resources(&after_ten));
+        if (index == 49U) CHECK(sample_resources(&after_fifty));
+        if (index == 99U) CHECK(sample_resources(&after_hundred));
+#endif
+    }
+#ifdef ECONTAINER_TEST_RESOURCE_STATS
+    CHECK(resources_stable("timer", after_ten, after_fifty, after_hundred));
+#endif
+    free(bytes);
+    return true;
+}
+
 int main(int argc, char **argv)
 {
-    if (argc != 9) {
-        fprintf(stderr, "usage: %s counter event-read init-loop event-loop stop-loop stop-fail wrong-signature host-api\n",
+    if (argc != 10) {
+        fprintf(stderr, "usage: %s counter event-read init-loop event-loop stop-loop stop-fail wrong-signature host-api timer\n",
                 argv[0]);
         return 2;
     }
@@ -539,9 +665,10 @@ int main(int argc, char **argv)
                         test_repeated_release(argv[1]) &&
                         test_failure_reopen(argv[1], argv[3], argv[4], argv[5], argv[6]) &&
                         test_repeated_native_release(argv[8]) &&
-                        test_host_api(argv[8]);
+                        test_host_api(argv[8]) && test_timers(argv[9]) &&
+                        test_repeated_timer_release(argv[9]);
     if (passed) {
-        fprintf(stderr, "runtime instance: 100 counter, 100 native and 100 failure/reopen cycles passed\n");
+        fprintf(stderr, "runtime instance: 100 counter, 100 native, 100 timer and 100 failure/reopen cycles passed\n");
     }
     return passed ? 0 : 1;
 }

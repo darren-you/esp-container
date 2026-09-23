@@ -55,7 +55,7 @@ static bool name_is(const uint8_t *name, uint32_t length, const char *expected)
 
 static bool import_type_matches(const uint8_t *wasm, size_t type_begin,
                                 size_t type_end, uint32_t type_index,
-                                uint32_t capability)
+                                uint32_t capability, bool timer_cancel)
 {
     if (type_begin == 0) {
         return false;
@@ -82,11 +82,18 @@ static bool import_type_matches(const uint8_t *wasm, size_t type_begin,
         const uint8_t *result_types = wasm + cursor;
         cursor += results;
         if (index == type_index) {
-            return capability == ECONTAINER_CAP_MONOTONIC_TIME
-                       ? params == 0 && results == 1 && result_types[0] == 0x7e
-                       : params == 2 && param_types[0] == 0x7f &&
-                             param_types[1] == 0x7f && results == 1 &&
-                             result_types[0] == 0x7f;
+            if (results != 1) return false;
+            if (capability == ECONTAINER_CAP_MONOTONIC_TIME)
+                return params == 0 && result_types[0] == 0x7e;
+            if (capability == ECONTAINER_CAP_LOG)
+                return params == 2 && param_types[0] == 0x7f &&
+                       param_types[1] == 0x7f && result_types[0] == 0x7f;
+            if (capability == ECONTAINER_CAP_TIMER)
+                return timer_cancel
+                           ? params == 1 && param_types[0] == 0x7e && result_types[0] == 0x7f
+                           : params == 2 && param_types[0] == 0x7f &&
+                             param_types[1] == 0x7f && result_types[0] == 0x7e;
+            return false;
         }
     }
     return false;
@@ -106,6 +113,7 @@ static econtainer_wasm_result_t scan_module(const uint8_t *wasm, size_t size_byt
     size_t import_begin = 0;
     size_t import_end = 0;
     uint32_t capabilities = 0;
+    uint32_t seen_imports = 0;
     while (cursor < size_bytes) {
         const uint8_t section = wasm[cursor++];
         uint32_t length = 0;
@@ -167,7 +175,7 @@ static econtainer_wasm_result_t scan_module(const uint8_t *wasm, size_t size_byt
         if (!read_u32(wasm, import_end, &cursor, &count)) {
             return ECONTAINER_WASM_INVALID;
         }
-        if (count > 2) {
+        if (count > 4) {
             return ECONTAINER_WASM_UNSUPPORTED;
         }
         for (uint32_t index = 0; index < count; ++index) {
@@ -194,12 +202,18 @@ static econtainer_wasm_result_t scan_module(const uint8_t *wasm, size_t size_byt
             const uint32_t capability = name_is(field, field_size, "monotonic_ms")
                                             ? ECONTAINER_CAP_MONOTONIC_TIME
                                             : name_is(field, field_size, "log")
-                                                  ? ECONTAINER_CAP_LOG : 0;
-            if (capability == 0 || (capabilities & capability) != 0 ||
+                                                  ? ECONTAINER_CAP_LOG
+                                            : name_is(field, field_size, "timer_start") ||
+                                              name_is(field, field_size, "timer_cancel")
+                                                  ? ECONTAINER_CAP_TIMER : 0;
+            const bool is_timer_cancel = name_is(field, field_size, "timer_cancel");
+            const uint32_t seen_bit = is_timer_cancel ? 8U : capability;
+            if (capability == 0 || (seen_imports & seen_bit) != 0 ||
                 !import_type_matches(wasm, type_begin, type_end, type_index,
-                                     capability)) {
+                                     capability, is_timer_cancel)) {
                 return ECONTAINER_WASM_UNSUPPORTED;
             }
+            seen_imports |= seen_bit;
             capabilities |= capability;
         }
         if (cursor != import_end) {

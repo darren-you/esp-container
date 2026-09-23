@@ -224,17 +224,22 @@ static bool scan_imports(wasm_reader_t *reader, const wasm_section_t sections[13
     if (!next_u32(reader, imports.end, &cursor, &count)) {
         return false;
     }
-    if (count > 2) {
+    if (count > 4) {
         *unsupported = true;
         return true;
     }
     static const uint8_t log_params[] = {0x7f, 0x7f};
+    static const uint8_t start_params[] = {0x7f, 0x7f};
+    static const uint8_t cancel_params[] = {0x7e};
     static const uint8_t i32_result[] = {0x7f};
     static const uint8_t i64_result[] = {0x7e};
+    uint32_t seen = 0;
     for (uint32_t index = 0; index < count; ++index) {
         bool module = false;
         bool clock_name = false;
         bool log_name = false;
+        bool start_name = false;
+        bool cancel_name = false;
         uint8_t kind = 0;
         uint32_t type_index = 0;
         if (!name_is(reader, imports.end, &cursor, "econtainer", &module)) {
@@ -250,6 +255,16 @@ static bool scan_imports(wasm_reader_t *reader, const wasm_section_t sections[13
                 return false;
             }
         }
+        if (!clock_name && !log_name) {
+            cursor = field_begin;
+            if (!name_is(reader, imports.end, &cursor, "timer_start", &start_name))
+                return false;
+        }
+        if (!clock_name && !log_name && !start_name) {
+            cursor = field_begin;
+            if (!name_is(reader, imports.end, &cursor, "timer_cancel", &cancel_name))
+                return false;
+        }
         if (!next_byte(reader, imports.end, &cursor, &kind) ||
             !next_u32(reader, imports.end, &cursor, &type_index)) {
             return false;
@@ -259,19 +274,26 @@ static bool scan_imports(wasm_reader_t *reader, const wasm_section_t sections[13
             return true;
         }
         const uint32_t cap = clock_name ? ECONTAINER_CAP_MONOTONIC_TIME
-                              : log_name ? ECONTAINER_CAP_LOG : 0;
-        if (cap == 0 || (abi->imported_capabilities & cap) != 0) {
+                              : log_name ? ECONTAINER_CAP_LOG
+                              : start_name || cancel_name ? ECONTAINER_CAP_TIMER : 0;
+        const uint32_t seen_bit = cancel_name ? 8U : cap;
+        if (cap == 0 || (seen & seen_bit) != 0) {
             *unsupported = true;
             return true;
         }
+        const uint8_t *params = log_name ? log_params
+                                : start_name ? start_params
+                                : cancel_name ? cancel_params : NULL;
+        const size_t params_size = log_name ? sizeof(log_params)
+                                   : start_name ? sizeof(start_params)
+                                   : cancel_name ? sizeof(cancel_params) : 0;
+        const uint8_t *result = log_name || cancel_name ? i32_result : i64_result;
         if (!type_matches(reader, sections[1], type_index,
-                          cap == ECONTAINER_CAP_LOG ? log_params : NULL,
-                          cap == ECONTAINER_CAP_LOG ? sizeof(log_params) : 0,
-                          cap == ECONTAINER_CAP_LOG ? i32_result : i64_result,
-                          cap == ECONTAINER_CAP_LOG ? sizeof(i32_result) : sizeof(i64_result))) {
+                          params, params_size, result, 1)) {
             *unsupported = true;
             return true;
         }
+        seen |= seen_bit;
         abi->imported_capabilities |= cap;
         ++abi->imported_count;
     }

@@ -19,6 +19,7 @@ typedef struct {
     uint32_t max_event_bytes;
     uint32_t allowed_capabilities;
     uint32_t max_log_bytes;
+    uint32_t max_timers;
     int32_t init_instruction_budget;
     int32_t event_instruction_budget;
     int32_t stop_instruction_budget;
@@ -36,6 +37,7 @@ typedef enum {
     ECONTAINER_RUNTIME_INSTRUCTION_LIMIT,
     ECONTAINER_RUNTIME_GUEST_FAILURE,
     ECONTAINER_RUNTIME_NO_LOG,
+    ECONTAINER_RUNTIME_NO_TIMER,
     ECONTAINER_RUNTIME_NOT_AUTHORIZED,
 } econtainer_runtime_result_t;
 
@@ -45,6 +47,11 @@ typedef enum {
     ECONTAINER_RUNTIME_STOPPED,
     ECONTAINER_RUNTIME_FAILED,
 } econtainer_runtime_state_t;
+
+typedef struct {
+    uint64_t handle;
+    uint32_t skipped_periods;
+} econtainer_timer_event_t;
 
 /* Inspect the raw Wasm memory section. WAMR may normalize page counts after
  * loading, so its export type cannot enforce this 64 KiB-page admission cap. */
@@ -81,6 +88,15 @@ econtainer_runtime_result_t econtainer_runtime_take_log(econtainer_runtime_t *ru
                                                        uint8_t *output,
                                                        size_t output_capacity,
                                                        size_t *log_size_bytes);
+/* The owner calls this outside every guest entry. No native timer callback calls
+ * into Wasm. It delivers at most one due event with the ordinary event budget;
+ * periodic overruns are coalesced into skipped_periods. */
+econtainer_runtime_result_t econtainer_runtime_poll_timer(econtainer_runtime_t *runtime,
+                                                         econtainer_timer_event_t *event,
+                                                         int32_t *guest_result);
+/* Allows the owner to sleep until the nearest deadline; no background worker. */
+econtainer_runtime_result_t econtainer_runtime_next_timer_deadline(
+    econtainer_runtime_t *runtime, uint64_t *deadline_ms);
 /* close releases even a failed/trapped instance. NULL and *NULL are harmless.
  * Calls must remain on the single owner thread. */
 econtainer_runtime_result_t econtainer_runtime_close(econtainer_runtime_t **runtime);
