@@ -86,7 +86,10 @@ typedef struct {
     econtainer_slot_operation_t operation;
 } econtainer_slots_state_t;
 
-/* write_blob must replace exactly one NVS key and commit it before returning. */
+/*
+ * write_blob returns true only after committing one NVS key durably.
+ * read_blob must fetch the committed view, never an uncommitted handle cache.
+ */
 typedef struct {
     bool (*lock)(void *context);
     void (*unlock)(void *context);
@@ -112,10 +115,15 @@ typedef bool (*econtainer_slot_validate_fn)(void *context,
                                              void *read_context,
                                              size_t package_size_bytes);
 
+/* The unique executor owner checks that this trial has stopped and has no native references. */
+typedef bool (*econtainer_slot_trial_stopped_fn)(
+    void *context, const uint8_t operation_id[ECONTAINER_SLOT_OPERATION_ID_BYTES]);
+
 typedef enum {
     ECONTAINER_SLOT_BOOT_BLOCKED = 0,
     ECONTAINER_SLOT_BOOT_CONFIRMED,
     ECONTAINER_SLOT_BOOT_RECOVER_CONFIRMED,
+    ECONTAINER_SLOT_BOOT_RECOVER_CONFIRMED_CANDIDATE_INVALID,
 } econtainer_slot_boot_decision_t;
 
 bool econtainer_slots_geometry_valid(const econtainer_slots_geometry_t *geometry);
@@ -129,7 +137,13 @@ econtainer_slots_result_t econtainer_slots_load(
     const econtainer_slots_io_t *io, const econtainer_slots_geometry_t *geometry,
     econtainer_slots_state_t *state);
 
-/* Conservatively hash every confirmed reference and every complete pending candidate. */
+/*
+ * Hash confirmed references first. If only a complete pending candidate is
+ * damaged, return its IO/UNTRUSTED error while preserving state and setting
+ * BOOT_RECOVER_CONFIRMED_CANDIDATE_INVALID. That decision allows only the
+ * separately verified old confirmed binding; it forbids candidate progress
+ * and further erasure until the operation is explicitly canceled.
+ */
 econtainer_slots_result_t econtainer_slots_reconcile(
     const econtainer_slots_io_t *io, const econtainer_slots_geometry_t *geometry,
     const uint8_t running_firmware_sha256[32], econtainer_slots_state_t *state,
@@ -170,11 +184,17 @@ econtainer_slots_result_t econtainer_slots_confirm(
     const uint8_t boot_id[ECONTAINER_SLOT_BOOT_ID_BYTES],
     econtainer_slots_state_t *state);
 
-/* Explicit cancellation; a trial may be canceled only after a different boot. */
+/*
+ * Explicit cancellation. A trial in the same boot requires trial_stopped_fn
+ * to prove native stop/reclamation under the storage owner lock. A different
+ * boot has no surviving in-memory trial instance. Cancellation never requires
+ * the discarded candidate's bytes to be intact.
+ */
 econtainer_slots_result_t econtainer_slots_abandon(
     const econtainer_slots_io_t *io, const econtainer_slots_geometry_t *geometry,
     uint32_t expected_sequence,
     const uint8_t boot_id[ECONTAINER_SLOT_BOOT_ID_BYTES],
+    econtainer_slot_trial_stopped_fn trial_stopped_fn, void *trial_context,
     econtainer_slots_state_t *state);
 
 #ifdef __cplusplus

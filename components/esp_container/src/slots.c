@@ -322,11 +322,14 @@ static econtainer_slots_result_t persist_locked(const econtainer_slots_io_t *io,
     if (before != NULL) {
         encode_state(before, old);
     }
-    (void)io->write_blob(io->context, desired);
+    const bool committed = io->write_blob(io->context, desired);
     if (io->read_blob(io->context, observed) != ECONTAINER_SLOT_BLOB_FOUND) {
         return ECONTAINER_SLOTS_UNCERTAIN;
     }
     if (memcmp(observed, desired, sizeof(desired)) == 0) {
+        if (!committed) {
+            return ECONTAINER_SLOTS_UNCERTAIN;
+        }
         if (state != NULL) {
             *state = *after;
         }
@@ -520,13 +523,24 @@ econtainer_slots_result_t econtainer_slots_reconcile(
         result = ECONTAINER_SLOTS_CONFLICT;
     }
     if (result == ECONTAINER_SLOTS_OK) {
-        result = check_references(io, geometry, state, true);
+        result = check_references(io, geometry, state, false);
     }
     if (result == ECONTAINER_SLOTS_OK) {
-        *decision = state->phase >= ECONTAINER_SLOT_WRITING &&
-                    state->phase <= ECONTAINER_SLOT_HEALTH_VERIFIED ?
-                    ECONTAINER_SLOT_BOOT_RECOVER_CONFIRMED :
-                    ECONTAINER_SLOT_BOOT_CONFIRMED;
+        if (state->phase >= ECONTAINER_SLOT_PREPARED &&
+            state->phase <= ECONTAINER_SLOT_HEALTH_VERIFIED) {
+            result = hash_flash(io, geometry, state->operation.slot,
+                                state->operation.package_size_bytes,
+                                state->operation.package_sha256);
+            if (result != ECONTAINER_SLOTS_OK) {
+                *decision = ECONTAINER_SLOT_BOOT_RECOVER_CONFIRMED_CANDIDATE_INVALID;
+            }
+        }
+        if (result == ECONTAINER_SLOTS_OK) {
+            *decision = state->phase >= ECONTAINER_SLOT_WRITING &&
+                        state->phase <= ECONTAINER_SLOT_HEALTH_VERIFIED ?
+                        ECONTAINER_SLOT_BOOT_RECOVER_CONFIRMED :
+                        ECONTAINER_SLOT_BOOT_CONFIRMED;
+        }
     } else {
         memset(state, 0, sizeof(*state));
     }
@@ -792,6 +806,7 @@ econtainer_slots_result_t econtainer_slots_confirm(
 econtainer_slots_result_t econtainer_slots_abandon(
     const econtainer_slots_io_t *io, const econtainer_slots_geometry_t *geometry,
     uint32_t expected_sequence, const uint8_t boot_id[ECONTAINER_SLOT_BOOT_ID_BYTES],
+    econtainer_slot_trial_stopped_fn trial_stopped_fn, void *trial_context,
     econtainer_slots_state_t *state)
 {
     if (!io_valid(io) || !econtainer_slots_geometry_valid(geometry) ||
@@ -812,10 +827,13 @@ econtainer_slots_result_t econtainer_slots_abandon(
         current.phase >= ECONTAINER_SLOT_TRIAL_STARTED &&
         memcmp(current.operation.trial_boot_id, boot_id,
                ECONTAINER_SLOT_BOOT_ID_BYTES) == 0) {
-        result = ECONTAINER_SLOTS_BUSY;
+        if (trial_stopped_fn == NULL ||
+            !trial_stopped_fn(trial_context, current.operation.operation_id)) {
+            result = ECONTAINER_SLOTS_BUSY;
+        }
     }
     if (result == ECONTAINER_SLOTS_OK) {
-        result = check_references(io, geometry, &current, true);
+        result = check_references(io, geometry, &current, false);
     }
     if (result == ECONTAINER_SLOTS_OK) {
         econtainer_slots_state_t next = current;

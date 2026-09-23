@@ -23,6 +23,8 @@ typedef struct {
     bool fail_flash_write;
     bool corrupt_flash_write;
     bool fail_flash_read;
+    unsigned fail_flash_read_slot;
+    bool trial_stopped;
     unsigned erase_count[ECONTAINER_SLOT_COUNT];
 } fake_store_t;
 
@@ -111,7 +113,9 @@ static bool fake_flash_read(void *context, uint32_t offset_bytes,
 {
     fake_store_t *store = context;
     assert(store->locked);
-    if (store->fail_flash_read || !flash_bounds(offset_bytes, size_bytes)) {
+    if (store->fail_flash_read || !flash_bounds(offset_bytes, size_bytes) ||
+        store->fail_flash_read_slot ==
+            1U + (offset_bytes - FLASH_BASE) / SLOT_BYTES) {
         return false;
     }
     memcpy(destination, store->flash + offset_bytes - FLASH_BASE, size_bytes);
@@ -169,6 +173,13 @@ static econtainer_slots_io_t fake_io(fake_store_t *store)
         .context = store,
     };
     return io;
+}
+
+static bool trial_stopped_proof(void *context,
+                                const uint8_t operation_id[ECONTAINER_SLOT_OPERATION_ID_BYTES])
+{
+    const fake_store_t *store = context;
+    return store->locked && store->trial_stopped && operation_id[0] == 2;
 }
 
 static void make_fixture(fixture_t *fixture, uint8_t seed)
@@ -335,7 +346,9 @@ static void test_commit_readback_and_torn_flash(void)
     store.fail_blob_write_before = false;
     store.fail_blob_write_after = true;
     assert(econtainer_slots_reserve(&io, &geometry, original_sequence,
-           firmware, &candidate, &state) == ECONTAINER_SLOTS_OK);
+           firmware, &candidate, &state) == ECONTAINER_SLOTS_UNCERTAIN);
+    assert(store.erase_count[2] == 0);
+    assert(econtainer_slots_load(&io, &geometry, &state) == ECONTAINER_SLOTS_OK);
     assert(state.phase == ECONTAINER_SLOT_WRITING && store.erase_count[2] == 0);
     store.fail_blob_write_after = false;
     store.fail_erase = true;
@@ -372,7 +385,12 @@ static void test_commit_readback_and_torn_flash(void)
     store.flash[2 * SLOT_BYTES] ^= 1;
     assert(econtainer_slots_reconcile(&io, &geometry, firmware,
            &state, &decision) == ECONTAINER_SLOTS_UNTRUSTED);
-    assert(decision == ECONTAINER_SLOT_BOOT_BLOCKED);
+    assert(decision == ECONTAINER_SLOT_BOOT_RECOVER_CONFIRMED_CANDIDATE_INVALID);
+    assert(state.phase == ECONTAINER_SLOT_PREPARED && state.bindings[1].slot == 1);
+    const econtainer_slot_operation_t next_candidate = operation(3, 0xb0, &p2);
+    assert(econtainer_slots_reserve(&io, &geometry, state.sequence,
+           firmware, &next_candidate, &state) == ECONTAINER_SLOTS_UNTRUSTED);
+    assert(store.erase_count[0] == 0 && store.erase_count[1] == 0);
 }
 
 static void test_unknown_recovery_and_record_damage(void)
@@ -418,9 +436,9 @@ static void test_unknown_recovery_and_record_damage(void)
     assert(decision == ECONTAINER_SLOT_BOOT_RECOVER_CONFIRMED);
     assert(state.bindings[1].slot == 1);
     assert(econtainer_slots_abandon(&io, &geometry, state.sequence,
-                                    old_boot, &state) == ECONTAINER_SLOTS_BUSY);
+                                    old_boot, NULL, NULL, &state) == ECONTAINER_SLOTS_BUSY);
     assert(econtainer_slots_abandon(&io, &geometry, state.sequence,
-                                    new_boot, &state) == ECONTAINER_SLOTS_OK);
+                                    new_boot, NULL, NULL, &state) == ECONTAINER_SLOTS_OK);
     assert(state.phase == ECONTAINER_SLOT_ABORTED && state.bindings[1].slot == 1);
     assert(store.erase_count[0] == 0 && store.erase_count[1] == 0);
 }
@@ -467,12 +485,80 @@ static void test_readback_boundary_and_confirm(void)
            state.bindings[1].slot == 1);
     store.fail_blob_write_after = true;
     assert(econtainer_slots_confirm(&io, &geometry, state.sequence,
-           firmware, boot_id, &state) == ECONTAINER_SLOTS_OK);
+           firmware, boot_id, &state) == ECONTAINER_SLOTS_UNCERTAIN);
     store.fail_blob_write_after = false;
     assert(econtainer_slots_reconcile(&io, &geometry, firmware,
            &state, &decision) == ECONTAINER_SLOTS_OK);
     assert(decision == ECONTAINER_SLOT_BOOT_CONFIRMED && state.bindings[1].slot == 2);
     assert(store.erase_count[0] == 0 && store.erase_count[1] == 0);
+}
+
+static void test_damaged_trial_same_boot_stop_proof(void)
+{
+    fake_store_t store;
+    fixture_t p0, p1, p2;
+    seed_two_packages(&store, &p0, &p1);
+    make_fixture(&p2, 12);
+    const econtainer_slots_io_t io = fake_io(&store);
+    uint8_t firmware[32];
+    memset(firmware, 0xb0, sizeof(firmware));
+    const econtainer_slot_operation_t candidate = operation(2, 0xb0, &p2);
+    uint8_t boot_id[ECONTAINER_SLOT_BOOT_ID_BYTES] = {2};
+    econtainer_slots_state_t state;
+    econtainer_slot_boot_decision_t decision;
+    assert(econtainer_slots_load(&io, &geometry, &state) == ECONTAINER_SLOTS_OK);
+    assert(econtainer_slots_reserve(&io, &geometry, state.sequence,
+           firmware, &candidate, &state) == ECONTAINER_SLOTS_OK);
+    assert(econtainer_slots_write_and_prepare(&io, &geometry, state.sequence,
+           source_read, &p2, validate_readback, &p2, &state) == ECONTAINER_SLOTS_OK);
+    assert(econtainer_slots_begin_trial(&io, &geometry, state.sequence,
+           firmware, boot_id, &state) == ECONTAINER_SLOTS_OK);
+    store.flash[2 * SLOT_BYTES] ^= 1;
+    assert(econtainer_slots_reconcile(&io, &geometry, firmware,
+           &state, &decision) == ECONTAINER_SLOTS_UNTRUSTED);
+    assert(decision == ECONTAINER_SLOT_BOOT_RECOVER_CONFIRMED_CANDIDATE_INVALID);
+    assert(state.bindings[1].slot == 1 && state.phase == ECONTAINER_SLOT_TRIAL_STARTED);
+    assert(econtainer_slots_abandon(&io, &geometry, state.sequence,
+           boot_id, NULL, NULL, &state) == ECONTAINER_SLOTS_BUSY);
+    assert(econtainer_slots_abandon(&io, &geometry, state.sequence,
+           boot_id, trial_stopped_proof, &store, &state) == ECONTAINER_SLOTS_BUSY);
+    store.trial_stopped = true;
+    assert(econtainer_slots_abandon(&io, &geometry, state.sequence,
+           boot_id, trial_stopped_proof, &store, &state) == ECONTAINER_SLOTS_OK);
+    assert(state.phase == ECONTAINER_SLOT_ABORTED && state.bindings[1].slot == 1);
+    const econtainer_slot_operation_t next_candidate = operation(3, 0xb0, &p2);
+    assert(econtainer_slots_reserve(&io, &geometry, state.sequence,
+           firmware, &next_candidate, &state) == ECONTAINER_SLOTS_OK);
+    assert(state.operation.slot == 2 && store.erase_count[0] == 0 &&
+           store.erase_count[1] == 0 && store.erase_count[2] == 1);
+}
+
+static void test_candidate_read_failure_keeps_confirmed(void)
+{
+    fake_store_t store;
+    fixture_t p0, p1, p2;
+    seed_two_packages(&store, &p0, &p1);
+    make_fixture(&p2, 12);
+    const econtainer_slots_io_t io = fake_io(&store);
+    uint8_t firmware[32];
+    memset(firmware, 0xb0, sizeof(firmware));
+    const econtainer_slot_operation_t candidate = operation(2, 0xb0, &p2);
+    econtainer_slots_state_t state;
+    econtainer_slot_boot_decision_t decision;
+    assert(econtainer_slots_load(&io, &geometry, &state) == ECONTAINER_SLOTS_OK);
+    assert(econtainer_slots_reserve(&io, &geometry, state.sequence,
+           firmware, &candidate, &state) == ECONTAINER_SLOTS_OK);
+    assert(econtainer_slots_write_and_prepare(&io, &geometry, state.sequence,
+           source_read, &p2, validate_readback, &p2, &state) == ECONTAINER_SLOTS_OK);
+    store.fail_flash_read_slot = 3;
+    assert(econtainer_slots_reconcile(&io, &geometry, firmware,
+           &state, &decision) == ECONTAINER_SLOTS_IO_FAILED);
+    assert(decision == ECONTAINER_SLOT_BOOT_RECOVER_CONFIRMED_CANDIDATE_INVALID);
+    assert(state.phase == ECONTAINER_SLOT_PREPARED && state.bindings[1].slot == 1);
+    assert(econtainer_slots_abandon(&io, &geometry, state.sequence,
+           (uint8_t[ECONTAINER_SLOT_BOOT_ID_BYTES]){0}, NULL, NULL, &state) ==
+           ECONTAINER_SLOTS_OK);
+    assert(state.phase == ECONTAINER_SLOT_ABORTED);
 }
 
 static void test_guards(void)
@@ -514,6 +600,8 @@ int main(void)
     test_commit_readback_and_torn_flash();
     test_unknown_recovery_and_record_damage();
     test_readback_boundary_and_confirm();
+    test_damaged_trial_same_boot_stop_proof();
+    test_candidate_read_failure_keeps_confirmed();
     test_guards();
     puts("slots: protected P0/P1/P2/P3, durable commit, torn Flash and restart checks passed");
     return 0;

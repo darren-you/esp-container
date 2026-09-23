@@ -5,14 +5,15 @@
 ## 事实与边界
 
 - 调用方从 Base 的实际分区发现中提供独立 data 分区边界、三个互不重叠的槽、擦写粒度；本仓没有冻结物理 offset、槽长或 4 MiB 布局。几何不完整、未对齐、越界或重叠会在调用任何回调前拒绝。
-- `read_blob` 必须精确区分 NVS key 不存在、完整读取和读取失败。`write_blob` 必须对**同一个 key**完成 `set_blob`、`commit`，再返回；组件随后精确读回 288 字节。CRC32 检测意外损坏，不承担数据真实性。记录非法、读回未知或序号不符时不擦槽。
+- `read_blob` 必须精确区分 NVS key 不存在、完整读取和读取失败，且只能从已提交的持久视图读取，不得返回同一 NVS handle 的未提交缓存。`write_blob` 只有对**同一个 key**完成 `set_blob`、`commit` 才能返回 true；组件随后精确读回 288 字节。commit 返回 false 即使读到新字节仍视为结果不明，不据此擦槽。CRC32 检测意外损坏，不承担数据真实性。记录非法、读回未知或序号不符时不擦槽。
 - `lock` 必须覆盖所有包槽 Flash/NVS 写入者和运行切换者，且在整个操作期间保持独占。组件不包含第二套操作账本；Base 对外仍负责跨多轮 operation_id 的去重、权限与串行化。单 blob 仅保留最近一次操作 ID 与相位。
 - 迁移入口 `initialize` 仅接受缺失记录，并对现有包引用全量回读 SHA-256；调用方还必须事先核对真实可启动固件、包签名、授权、ABI 与产品归属。读取失败、CRC 错误和真实空记录严格不同，不能以初始化覆盖损坏记录。
 - 任一擦除前重新读取记录、核对预期序号、全量计算两份已确认包摘要，并先把唯一候选槽写为 `WRITING`，完成 NVS commit/精确读回。一个包槽被任一已确认绑定或未决候选引用时不能被选为擦写目标。
 - 当前固件已有业务包时，product-only 更新要求候选 `data_schema_version` 精确相同；尚无包时可首次安装。产品 ID、签名密钥、ABI 与所需能力仍由验包/授权回调精确核对。
 - 写包时只擦已持久保留的槽，按提供的写粒度写入，不足末块补 `0xff`。写完从 Flash 重新计算**精确包长** SHA-256，再让调用方的只读回调完成签名、Wasm、产品授权与宿主 grant 检查。任何失败留在 `WRITING`，不能自动试运行；校验通过且 blob 读回一致后才进入 `PREPARED`。
 - `begin_trial` 在旧实例已停止回收之后、启动新实例之前持久记录 boot ID；`mark_healthy` 仅接受同一 boot ID；`confirm` 再读回受保护引用，并在单 blob 内替换该固件绑定。当前 API 仅处理同一实际固件下的 product-only 更新，不读写 `otadata`，不推断 OTA 固件 VALID。
-- 启动对账 `reconcile` 重新计算两份确认包及完整未决候选的摘要，仅对运行固件摘要命中的绑定给出选择。`WRITING`、`PREPARED`、`TRIAL_STARTED`、`HEALTH_VERIFIED` 在新 boot 均只返回旧确认绑定，不会重启候选或自动提交；`abandon` 为显式取消，已试运行的候选只能在不同 boot ID 下取消。调用方仍须在启动前重新验证签名、ABI、授权、数据 schema 和运行能力。
+- 启动对账 `reconcile` 先重新计算两份确认包摘要，仅对运行固件摘要命中的绑定给出选择。`WRITING`、`PREPARED`、`TRIAL_STARTED`、`HEALTH_VERIFIED` 在新 boot 均只返回旧确认绑定，不会重启候选或自动提交。完整候选摘要或读取失败时，保留旧确认包选择和状态，同时返回原始 `UNTRUSTED`/`IO_FAILED` 与 `BOOT_RECOVER_CONFIRMED_CANDIDATE_INVALID`；调用方只能启动另行验证过的旧确认包，必须记录候选错误，不能自动推进或擦槽。确认包错误仍是 `BOOT_BLOCKED`。
+- `abandon` 为显式取消。不同 boot 可直接证明 RAM 中不存在前次试运行实例；同一 boot 必须由唯一执行器 owner 在持有存储锁期间调用 `trial_stopped_fn`，核对该 operation 的候选已停止、回调/原生引用已收敛。取消只依赖确认包完整性，被抛弃的候选字节即使损坏也不妨碍持久取消。取消后的新操作仍须取得不同 operation ID，并重新执行授权/验包。调用方在启动旧包前仍须验证签名、ABI、授权、数据 schema 和运行能力。
 
 ## 三槽引用序列
 
@@ -28,6 +29,6 @@
 
 ## 已验证与待验
 
-主机 `slots` CTest 使用假 Flash/NVS 覆盖 P0→P3 引用变化、先提交保留再擦除、两种 commit 返回错误的精确读回裁决、blob 读回失败/CRC 损坏、部分写入、回读摘要损坏、复位后只选旧包、错序号/错固件与几何拒绝。原包解析和 Wasm 扫描 CTest 保持独立运行。
+主机 `slots` CTest 使用假 Flash/NVS 覆盖 P0→P3 引用变化、先提交保留再擦除、两种 commit 返回错误的保守裁决、blob 读回失败/CRC 损坏、部分写入、候选回读摘要损坏/断读、旧确认包可恢复但不可推进候选、同 boot 无停止证明拒绝取消/停止证明后取消、错序号/错固件与几何拒绝。原包解析和 Wasm 扫描 CTest 保持独立运行。
 
 仍缺真实 `esp_partition`/NVS provider、完整 `econtainer_package_verify` 与静态扫描/授权回调装配、同 Flash 写入者独占、实际两份固件身份/状态对账、联合 OTA 阶段、产品操作账本、真实断电与 C3 实板的容量/时延/磨损验证。P6-08、P6-10、P7-01 因此保持未验收。
