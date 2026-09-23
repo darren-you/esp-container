@@ -6,5 +6,5 @@ license: "Apache-2.0"
 dependencies:
   idf: "==6.1.0"
   wasm-micro-runtime:
-    git: "https://github.com/wasm-micro-runtime/wasm-micro-runtime.git"
-    version: "8c18e3f68b16c4bcaf05996b2636f6ed2b4cf629"
+    git: "https://github.com/darren-you/wasm-micro-runtime.git"
+    version: "a34d721b630213f59fde0b40cebbb980903660e8"

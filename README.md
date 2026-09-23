@@ -17,7 +17,7 @@ flowchart LR
     base["esp-base：未来的平台装配与持久授权"] -.-> scanner
 ```
 
-IDF 组件物理路径为 `components/esp_container`，其名称与仓库 `esp-container` 属不同命名空间。公开 Git 消费方须把完整提交 SHA 和 `path: components/esp_container` 写入 `idf_component.yml`。WAMR 由该组件的 manifest 固定到完整上游 SHA；[SDK 锁](components/esp_container/sdk-lock.json)固定 IDF/lwIP 源码，组件构建核对锁定组合。独立样例不读取相邻工作区、私有 Tool 或生产凭据。
+IDF 组件物理路径为 `components/esp_container`，其名称与仓库 `esp-container` 属不同命名空间。公开 Git 消费方须把完整提交 SHA 和 `path: components/esp_container` 写入 `idf_component.yml`。WAMR 由该组件的 manifest 固定到[公开维护 fork](docs/design/source-provenance.md) 的完整修复提交；[SDK 锁](components/esp_container/sdk-lock.json)固定 IDF/lwIP 源码，组件构建核对锁定组合。独立样例不读取相邻工作区、私有 Tool 或生产凭据。
 
 ## 本机验证
 
@@ -30,7 +30,7 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-host 工具的包格式和使用步骤见 [包工具](tools/README.md)。[C3 原型](examples/c3-runtime/README.md)需要固定 SDK；当前锁定的原样 WAMR 2.4.4 与固定 IDF 6.1 在 C3 编译上有[已核对的上游阻塞](docs/operations/development-checkpoint.md)。本地构建不会写板。当前代码没有可发布的产品包运行/安装链路，不要把主机验包成功当作设备安全启动。
+host 工具的包格式和使用步骤见 [包工具](tools/README.md)。[C3 原型](examples/c3-runtime/README.md)需要固定 SDK；原样 WAMR 2.4.4 与固定 IDF 6.1 的编译问题已在公开 fork 的源码中直接修复，具体构建结果见[开发检查点](docs/operations/development-checkpoint.md)。本地构建不会写板。当前代码没有可发布的产品包运行/安装链路，不要把主机验包成功当作设备安全启动。
 
 ## 项目边界
 
