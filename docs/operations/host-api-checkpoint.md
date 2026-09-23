@@ -18,7 +18,9 @@
 
 锁定 WAMR 真 guest 回归覆盖一次/周期事件、周期超期合并、配额满、非法期限、取消后新建不复用、伪造事件拒绝、stop 撤销和跨实例旧句柄拒绝。句柄分配函数的边界测试直接跨过旧 24 位序号上限，并验证 `UINT64_MAX` 最后一张有效句柄及其后的永久拒绝，无需循环千万次。平台尚未提供公开安装入口或 Base 装配，因此此切片不能被解释成设备上的产品定时任务已可发布。
 
-隔离 checkout 使用 wasi-sdk 33 的 Python unittest 18/18、锁定 WAMR 的普通与 ASan/UBSan CTest 各 8/8 通过。定时器 guest 连续 100 次创建、挂起计时、stop、close；macOS 校准后的第 10/50/100 次 malloc 在三个采样点均为 24272 字节，虚拟地址均为 500517584896 字节，区域数均为 63。固定 ESP-IDF `855937c` 与 lwIP `2758df4` 的 C3 样例普通构建通过，app 为 `0x39260` 字节，SHA-256 为 `9f30d72c7b77d1b17f95edf0db6073baa2e68967e7efdbf0b9c4f150938984f6`；本轮重新编译了 `runtime.c`，样例仍未在 C3 上执行定时器 guest，也没有刷板。
+隔离 checkout 使用 wasi-sdk 33 的 Python unittest 18/18、锁定 WAMR 的普通与 ASan/UBSan CTest 各 8/8 通过。定时器 guest 连续 100 次创建、挂起计时、stop、close；macOS 校准后的第 10/50/100 次 malloc 在三个采样点均为 24272 字节，虚拟地址均为 500517584896 字节，区域数均为 63。固定 ESP-IDF `855937c` 与 lwIP `2758df4` 的 C3 原样样例构建通过，app 为 `0x39260` 字节，SHA-256 为 `9f30d72c7b77d1b17f95edf0db6073baa2e68967e7efdbf0b9c4f150938984f6`；该镜像没有执行定时器 guest，也没有刷板。
+
+随后在独立 checkout 临时扩展 C3 样例的同一个 `pthread_create` owner，嵌入由固定 wasi-sdk 33 编译的 `tests/timer_guest.c`（Wasm 934 字节，SHA-256 `f1b72ab3efd0ed88d6ceda53caec953fffb7e257bfdc7cb76e3dcff8aa1a6a99`），使用公开 ESP-IDF fork `855937cf9dcee13ee9c423fb0319238cdc8d53fd`、esp-lwip `2758df4cd3666b3b2a5b53830148379326425c0d` 和锁定 WAMR 构建。临时镜像大小 `0x3b510` 字节，SHA-256 `7080848b456efc0dfe771092a274ba99b1bd0dcba294463b805f9c7717b5b0c7`。官方 Espressif QEMU 9.2.2（`esp_develop_9.2.2_20260417`）的 C3 串口显示 `open/init/cancel-now/replacement/schedule/early poll/one-shot/periodic/coalesced periodic/cancel periodic/stop/close` 全部返回预期状态，周期合并 `skipped=1 result=21`，最终 `timer path=1`。打开前、打开后、关闭后的 8-bit 空闲堆分别为 324520、176164、324520 字节，关闭前后最大连续块均为 188416 字节。该修改只用于仓外临时仿真，正式样例保持原入口；QEMU 结果不等于实板时序、签名包安装、Flash 三槽或 Base 同时运行验收。
 
 ## 已验证的软件证据
 
