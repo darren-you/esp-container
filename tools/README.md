@@ -40,4 +40,4 @@ Wasm 初筛只接受 `econtainer.monotonic_ms() -> i64` 与 `econtainer.log(i32,
 
 当前 host 编码回归向量使用 `examples/counter/spec.example.json` 的清单字段、8 字节 Wasm v1 空模块，以及 `bytes(range(256)) + bytes(range(128))` 作为固定的 384 字节占位签名。生成的规范 manifest 长 545 字节、SHA-256 为 `0e6cba55543b3bd443881f08dc8a0c2d431d0376fe04c3ab901bb858cc0da6e4`；归档长 10,240 字节、SHA-256 为 `f72ef6b500a1dee059625df8772b2e5ad5c9d7a4fd5adf04e4fb1ce0271e6c67`。此占位签名不具备密码学效力，向量仅用于锁住当前主机编码行为；P6-05 的最终包容量、ABI 和发布签名合同仍待验证。
 
-当前 `--max-wasm-bytes` 默认 512 KiB 是 host 原型拒绝上限，不是已冻结的 C3 业务包容量。组件已有[只读流式验包切片](../docs/operations/package-stream-checkpoint.md)，但未接入实际 Flash 包槽、稳定读回、设备授权、ABI/配额、三包槽或安装 API；本工具的成功结果不能代表设备已可安全安装。
+当前 `--max-wasm-bytes` 默认 512 KiB 是 host 原型拒绝上限，不是已冻结的 C3 业务包容量。组件已有[只读流式验包及 Wasm 静态检查切片](../docs/operations/package-stream-checkpoint.md)；设备检查使用验包后得到的签名清单需求，并另外要求平台独立提供能力、内存和栈授权。它尚未接入实际 Flash 包槽、稳定读回、完整设备授权/配额、三包槽或安装 API；本工具的成功结果不能代表设备已可安全安装。

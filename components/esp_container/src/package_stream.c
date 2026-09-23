@@ -16,6 +16,12 @@ typedef struct {
 typedef struct {
     uint32_t wasm_size_bytes;
     uint8_t wasm_sha256[32];
+    uint32_t guest_abi_version;
+    uint32_t memory_limit_bytes;
+    uint32_t stack_limit_bytes;
+    uint32_t requested_capabilities;
+    bool has_unknown_capability;
+    bool is_classic_profile;
 } econtainer_manifest_t;
 
 typedef struct {
@@ -106,7 +112,22 @@ static bool json_identifier_value(econtainer_json_t *json, const char *key,
     return json_identifier_key(json, key) && json_identifier(json, start, size_bytes);
 }
 
-static bool json_caps(econtainer_json_t *json)
+static bool json_runtime_profile(econtainer_json_t *json,
+                                 econtainer_manifest_t *manifest)
+{
+    const uint8_t *identifier = NULL;
+    size_t identifier_size = 0;
+    static const char classic_profile[] = "wamr-classic-v1";
+    if (!json_identifier_value(json, "runtime_profile", &identifier, &identifier_size)) {
+        return false;
+    }
+    manifest->is_classic_profile =
+        identifier_size == sizeof(classic_profile) - 1U &&
+        memcmp(identifier, classic_profile, identifier_size) == 0;
+    return true;
+}
+
+static bool json_caps(econtainer_json_t *json, econtainer_manifest_t *manifest)
 {
     if (!json_identifier_key(json, "required_capabilities") || !json_literal(json, "[")) {
         return false;
@@ -121,6 +142,17 @@ static bool json_caps(econtainer_json_t *json)
         size_t current_size = 0;
         if (!json_identifier(json, &current, &current_size)) {
             return false;
+        }
+        static const char clock_cap[] = "monotonic-time";
+        static const char log_cap[] = "log";
+        if (current_size == sizeof(clock_cap) - 1U &&
+            memcmp(current, clock_cap, current_size) == 0) {
+            manifest->requested_capabilities |= ECONTAINER_CAP_MONOTONIC_TIME;
+        } else if (current_size == sizeof(log_cap) - 1U &&
+                   memcmp(current, log_cap, current_size) == 0) {
+            manifest->requested_capabilities |= ECONTAINER_CAP_LOG;
+        } else {
+            manifest->has_unknown_capability = true;
         }
         if (previous != NULL) {
             const size_t common = previous_size < current_size ? previous_size : current_size;
@@ -173,7 +205,7 @@ static bool parse_manifest(const uint8_t *data, size_t size_bytes, const char *e
     if (!json_literal(&json, "{") ||
         !json_number_key(&json, "data_schema_version", false, &number) ||
         !json_literal(&json, ",") ||
-        !json_number_key(&json, "guest_abi_version", false, &number) ||
+        !json_number_key(&json, "guest_abi_version", false, &manifest->guest_abi_version) ||
         !json_literal(&json, ",\"limits\":{") ||
         !json_number_key(&json, "event_queue_limit", false, &number) ||
         !json_literal(&json, ",") ||
@@ -181,9 +213,9 @@ static bool parse_manifest(const uint8_t *data, size_t size_bytes, const char *e
         !json_literal(&json, ",") ||
         !json_number_key(&json, "instruction_budget", false, &number) ||
         !json_literal(&json, ",") ||
-        !json_number_key(&json, "memory_limit_bytes", false, &number) ||
+        !json_number_key(&json, "memory_limit_bytes", false, &manifest->memory_limit_bytes) ||
         !json_literal(&json, ",") ||
-        !json_number_key(&json, "stack_limit_bytes", false, &number) ||
+        !json_number_key(&json, "stack_limit_bytes", false, &manifest->stack_limit_bytes) ||
         !json_literal(&json, ",") ||
         !json_number_key(&json, "storage_limit_bytes", true, &number) ||
         !json_literal(&json, "},") ||
@@ -201,9 +233,9 @@ static bool parse_manifest(const uint8_t *data, size_t size_bytes, const char *e
         !json_literal(&json, ",") ||
         !json_identifier_value(&json, "product_version", &identifier, &identifier_size) ||
         !json_literal(&json, ",") ||
-        !json_caps(&json) ||
+        !json_caps(&json, manifest) ||
         !json_literal(&json, ",") ||
-        !json_identifier_value(&json, "runtime_profile", &identifier, &identifier_size) ||
+        !json_runtime_profile(&json, manifest) ||
         !json_literal(&json, ",\"signature_algorithm\":\"rsa-3072-pss-sha256\",") ||
         !json_identifier_value(&json, "signing_key_id", &identifier, &identifier_size) ||
         identifier_size != strlen(expected_key_id) ||
@@ -465,9 +497,16 @@ econtainer_package_result_t econtainer_package_verify(
         return ECONTAINER_PACKAGE_INVALID;
     }
     info->manifest_size_bytes = manifest_size_bytes;
+    info->package_size_bytes = package_size_bytes;
     info->wasm_offset_bytes = wasm_offset_bytes;
     info->wasm_size_bytes = member_size;
     memcpy(info->wasm_sha256, actual_wasm_sha256, sizeof(info->wasm_sha256));
+    info->guest_abi_version = manifest.guest_abi_version;
+    info->memory_limit_bytes = manifest.memory_limit_bytes;
+    info->stack_limit_bytes = manifest.stack_limit_bytes;
+    info->requested_capabilities = manifest.requested_capabilities;
+    info->has_unknown_capability = manifest.has_unknown_capability;
+    info->is_classic_profile = manifest.is_classic_profile;
     return ECONTAINER_PACKAGE_OK;
 
 done:

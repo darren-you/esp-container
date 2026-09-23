@@ -4,6 +4,7 @@ project(esp_container VERSION 0.1.0 LANGUAGES C)
 find_package(OpenSSL REQUIRED COMPONENTS Crypto)
 add_library(esp_container STATIC
     components/esp_container/src/wasm_scan.c
+    components/esp_container/src/package_wasm.c
     components/esp_container/src/package_stream.c
     components/esp_container/src/package_crypto.c)
 target_include_directories(esp_container PUBLIC components/esp_container/include)
@@ -20,6 +21,12 @@ if(BUILD_TESTING)
     add_test(NAME package_stream
         COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/package_stream_test.py"
                 "$<TARGET_FILE:package_stream_test>")
+    add_executable(package_wasm_test tests/package_wasm_test.c)
+    target_link_libraries(package_wasm_test PRIVATE esp_container)
+    target_compile_options(package_wasm_test PRIVATE -Wall -Wextra -Werror -UNDEBUG)
+    add_test(NAME package_wasm
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/package_wasm_test.py"
+                "$<TARGET_FILE:package_wasm_test>")
     add_executable(wasm_scan_test tests/wasm_scan_test.c)
     target_link_libraries(wasm_scan_test PRIVATE esp_container)
     target_compile_options(wasm_scan_test PRIVATE -Wall -Wextra -Werror -UNDEBUG)

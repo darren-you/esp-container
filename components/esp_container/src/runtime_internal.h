@@ -5,14 +5,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "esp_container.h"
+
 /* Component-private execution seam. Package verification and installation are
  * separate prerequisites; Base must never receive this raw-module interface. */
 typedef struct econtainer_runtime econtainer_runtime_t;
-
-enum {
-    ECONTAINER_CAP_MONOTONIC_TIME = 1U << 0,
-    ECONTAINER_CAP_LOG = 1U << 1,
-};
 
 typedef struct {
     uint32_t max_wasm_bytes;
