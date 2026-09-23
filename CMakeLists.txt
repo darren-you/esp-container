@@ -29,12 +29,46 @@ if(BUILD_TESTING)
         set(WAMR_BUILD_SIMD 0)
         set(WAMR_BUILD_REF_TYPES 0)
         set(WAMR_BUILD_BULK_MEMORY 0)
+        set(WAMR_BUILD_SHARED_MEMORY 0)
         set(WAMR_BUILD_INSTRUCTION_METERING 1)
         add_subdirectory("${ESP_CONTAINER_WAMR_SOURCE}" "${CMAKE_CURRENT_BINARY_DIR}/wamr")
+        target_sources(esp_container PRIVATE components/esp_container/src/runtime.c)
+        target_include_directories(esp_container PRIVATE components/esp_container/src)
+        target_link_libraries(esp_container PRIVATE vmlib)
         add_executable(wamr_classic_test tests/wamr_classic_test.c)
         target_link_libraries(wamr_classic_test PRIVATE esp_container vmlib)
         target_compile_options(wamr_classic_test PRIVATE -Wall -Wextra -Werror)
         add_test(NAME wamr_classic COMMAND wamr_classic_test)
         set_tests_properties(wamr_classic PROPERTIES TIMEOUT 10)
+
+        set(ESP_CONTAINER_WASI_SDK_ROOT "$ENV{WASI_SDK_ROOT}" CACHE PATH
+            "Official wasi-sdk 33 root for real counter runtime tests")
+        if(ESP_CONTAINER_WASI_SDK_ROOT)
+            find_package(Python3 REQUIRED COMPONENTS Interpreter)
+            set(runtime_guests_dir "${CMAKE_CURRENT_BINARY_DIR}/runtime-guests")
+            set(runtime_guests
+                "${runtime_guests_dir}/counter.wasm"
+                "${runtime_guests_dir}/event-read.wasm"
+                "${runtime_guests_dir}/init-loop.wasm"
+                "${runtime_guests_dir}/event-loop.wasm"
+                "${runtime_guests_dir}/stop-loop.wasm"
+                "${runtime_guests_dir}/wrong-signature.wasm")
+            add_custom_command(OUTPUT ${runtime_guests}
+                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/build_runtime_guests.py"
+                    --wasi-sdk "${ESP_CONTAINER_WASI_SDK_ROOT}"
+                    --output-dir "${runtime_guests_dir}"
+                DEPENDS tests/build_runtime_guests.py tests/runtime_guest.c
+                    tools/counter_guest.py examples/counter/counter.c
+                    guest-sdk/include/econtainer_guest.h
+                VERBATIM)
+            add_custom_target(runtime_guest_fixtures DEPENDS ${runtime_guests})
+            add_executable(runtime_instance_test tests/runtime_instance_test.c)
+            target_include_directories(runtime_instance_test PRIVATE components/esp_container/src)
+            target_link_libraries(runtime_instance_test PRIVATE esp_container)
+            target_compile_options(runtime_instance_test PRIVATE -Wall -Wextra -Werror -UNDEBUG)
+            add_dependencies(runtime_instance_test runtime_guest_fixtures)
+            add_test(NAME runtime_instance COMMAND runtime_instance_test ${runtime_guests})
+            set_tests_properties(runtime_instance PROPERTIES TIMEOUT 15)
+        endif()
     endif()
 endif()

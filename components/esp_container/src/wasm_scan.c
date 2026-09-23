@@ -1,4 +1,5 @@
 #include "esp_container.h"
+#include "runtime_internal.h"
 
 #include <stdbool.h>
 #include <string.h>
@@ -104,4 +105,37 @@ econtainer_wasm_result_t econtainer_wasm_check(const uint8_t *wasm, size_t size_
         cursor = end;
     }
     return ECONTAINER_WASM_OK;
+}
+
+bool econtainer_wasm_memory_within_limit(const uint8_t *wasm, size_t size_bytes,
+                                         uint32_t max_memory_pages)
+{
+    if (max_memory_pages == 0 ||
+        econtainer_wasm_check(wasm, size_bytes) != ECONTAINER_WASM_OK) {
+        return false;
+    }
+    size_t cursor = 8;
+    while (cursor < size_bytes) {
+        const uint8_t section = wasm[cursor++];
+        uint32_t length = 0;
+        if (!read_u32(wasm, size_bytes, &cursor, &length) ||
+            (size_t)length > size_bytes - cursor) {
+            return false;
+        }
+        const size_t end = cursor + (size_t)length;
+        if (section == 5) {
+            uint32_t count = 0;
+            uint32_t flags = 0;
+            uint32_t minimum = 0;
+            uint32_t maximum = 0;
+            return read_u32(wasm, end, &cursor, &count) && count == 1 &&
+                   read_u32(wasm, end, &cursor, &flags) && flags == 1 &&
+                   read_u32(wasm, end, &cursor, &minimum) && minimum > 0 &&
+                   read_u32(wasm, end, &cursor, &maximum) &&
+                   minimum <= maximum && maximum <= max_memory_pages &&
+                   cursor == end;
+        }
+        cursor = end;
+    }
+    return false;
 }
