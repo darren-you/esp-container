@@ -287,11 +287,26 @@ static void test_slot_engine_with_idf_provider(void)
     econtainer_slot_binding_t bindings[ECONTAINER_SLOT_BINDING_COUNT] = {0};
     bindings[0].present = true;
     memset(bindings[0].firmware_sha256, 0x11, sizeof bindings[0].firmware_sha256);
-    assert(econtainer_slots_initialize(&provider.io, &provider.geometry, bindings) == ECONTAINER_SLOTS_OK);
+    econtainer_slot_firmware_set_t firmware_set = {0};
+    firmware_set.bootable_count = 1;
+    memset(firmware_set.bootable_firmware_sha256[0], 0x11, 32);
+    memset(firmware_set.running_firmware_sha256, 0x11, 32);
+    econtainer_slot_firmware_set_t incorrect = firmware_set;
+    memset(incorrect.bootable_firmware_sha256[0], 0x22, 32);
+    memset(incorrect.running_firmware_sha256, 0x22, 32);
+    assert(econtainer_slots_initialize(&provider.io, &provider.geometry,
+                                       &incorrect, bindings) == ECONTAINER_SLOTS_INVALID);
+    assert(commits == 0 && erases == 0);
+    assert(econtainer_slots_initialize(&provider.io, &provider.geometry,
+                                       &firmware_set, bindings) == ECONTAINER_SLOTS_OK);
     assert(commits == 1 && stored_size == ECONTAINER_SLOT_BLOB_BYTES && !storage_lock.held);
     econtainer_slots_state_t state;
     assert(econtainer_slots_load(&provider.io, &provider.geometry, &state) == ECONTAINER_SLOTS_OK);
     assert(state.sequence == 1U && state.bindings[0].present && state.phase == ECONTAINER_SLOT_IDLE);
+    econtainer_slot_boot_decision_t decision;
+    assert(econtainer_slots_reconcile(&provider.io, &provider.geometry,
+                                      &firmware_set, &state, &decision) == ECONTAINER_SLOTS_OK);
+    assert(decision == ECONTAINER_SLOT_BOOT_CONFIRMED);
     assert(erases == 0 && writes == 0);
 }
 

@@ -1,6 +1,6 @@
 # ESP Container
 
-`esp-container` 是面向 ESP-IDF 的业务包运行组件。当前提供独立 `esp_container` IDF 组件、受限 Wasm 扫描器、counter guest 的固定 freestanding 构建与静态检查、公开 guest SDK 草案、确定性 ustar 打包与 RSA-3072/PSS 验包工具、只读回调式设备验包及 Wasm ABI/能力检查切片、三槽原始 Flash 存储软件切片、精确分区前置的 ESP-IDF Flash/NVS provider，以及组件私有的 WAMR Classic 单实例运行切片。该私有切片增加逐项授权的单调时间和有界日志导入；实际专用包分区、完整签名包安装、Base 联合升级与实板容量尚未完成，当前代码只可作为研发检查点。
+`esp-container` 是面向 ESP-IDF 的业务包运行组件。当前提供独立 `esp_container` IDF 组件、受限 Wasm 扫描器、counter guest 的固定 freestanding 构建与静态检查、公开 guest SDK 草案、确定性 ustar 打包与 RSA-3072/PSS 验包工具、只读回调式设备验包及 Wasm ABI/能力检查切片、三槽原始 Flash 存储软件切片、双固件集合对账、精确分区前置的 ESP-IDF Flash/NVS provider，以及组件私有的 WAMR Classic 单实例运行切片。该私有切片增加逐项授权的单调时间和有界日志导入；实际专用包分区、完整签名包安装、Base 联合升级与实板容量尚未完成，当前代码只可作为研发检查点。
 
 ## 架构拓扑
 
@@ -14,6 +14,7 @@ flowchart LR
     pkg --> verifier["esp_container：有界流式验包 / 信任锚验签"]
     verifier --> scanner["esp_container：只读 Wasm ABI / 导入 / 能力检查"]
     base -->|"独立可信授权"| scanner
+    base -->|"实际可启动固件集合"| slots
     slot_tests["slots_test.c：假 Flash / NVS 故障注入"] --> slots["esp_container：三槽保护 / 单 blob 对账"]
     slots --> slot_callbacks["调用方 Flash / NVS 回调接口"]
     idf_provider["slots_idf：精确专用分区 / NVS 接线"] --> slot_callbacks

@@ -441,6 +441,55 @@ static int binding_for_firmware(const econtainer_slots_state_t *state,
     return -1;
 }
 
+static bool firmware_set_valid(const econtainer_slot_firmware_set_t *firmware_set)
+{
+    if (firmware_set == NULL || firmware_set->bootable_count == 0U ||
+        firmware_set->bootable_count > ECONTAINER_SLOT_BINDING_COUNT ||
+        all_zero(firmware_set->running_firmware_sha256, 32)) {
+        return false;
+    }
+    bool running_found = false;
+    for (unsigned index = 0; index < ECONTAINER_SLOT_BINDING_COUNT; ++index) {
+        const uint8_t *digest = firmware_set->bootable_firmware_sha256[index];
+        if (index >= firmware_set->bootable_count) {
+            if (!all_zero(digest, 32)) {
+                return false;
+            }
+            continue;
+        }
+        if (all_zero(digest, 32)) {
+            return false;
+        }
+        for (unsigned previous = 0; previous < index; ++previous) {
+            if (memcmp(digest, firmware_set->bootable_firmware_sha256[previous], 32) == 0) {
+                return false;
+            }
+        }
+        running_found |= memcmp(digest, firmware_set->running_firmware_sha256, 32) == 0;
+    }
+    return running_found;
+}
+
+static bool firmware_set_matches(const econtainer_slots_state_t *state,
+                                 const econtainer_slot_firmware_set_t *firmware_set)
+{
+    unsigned binding_count = 0;
+    for (unsigned index = 0; index < ECONTAINER_SLOT_BINDING_COUNT; ++index) {
+        if (state->bindings[index].present) {
+            ++binding_count;
+            bool found = false;
+            for (unsigned member = 0; member < firmware_set->bootable_count; ++member) {
+                found |= memcmp(state->bindings[index].firmware_sha256,
+                                firmware_set->bootable_firmware_sha256[member], 32) == 0;
+            }
+            if (!found) {
+                return false;
+            }
+        }
+    }
+    return binding_count == firmware_set->bootable_count;
+}
+
 static econtainer_slots_result_t begin_locked(const econtainer_slots_io_t *io,
                                                const econtainer_slots_geometry_t *geometry,
                                                uint32_t expected_sequence,
@@ -455,9 +504,11 @@ static econtainer_slots_result_t begin_locked(const econtainer_slots_io_t *io,
 
 econtainer_slots_result_t econtainer_slots_initialize(
     const econtainer_slots_io_t *io, const econtainer_slots_geometry_t *geometry,
+    const econtainer_slot_firmware_set_t *firmware_set,
     const econtainer_slot_binding_t bindings[ECONTAINER_SLOT_BINDING_COUNT])
 {
-    if (!io_valid(io) || !econtainer_slots_geometry_valid(geometry) || bindings == NULL) {
+    if (!io_valid(io) || !econtainer_slots_geometry_valid(geometry) ||
+        !firmware_set_valid(firmware_set) || bindings == NULL) {
         return ECONTAINER_SLOTS_INVALID;
     }
     if (!io->lock(io->context)) {
@@ -469,7 +520,8 @@ econtainer_slots_result_t econtainer_slots_initialize(
         econtainer_slots_state_t initial = {0};
         initial.sequence = 1U;
         memcpy(initial.bindings, bindings, sizeof(initial.bindings));
-        if (!state_valid(&initial, geometry)) {
+        if (!state_valid(&initial, geometry) ||
+            !firmware_set_matches(&initial, firmware_set)) {
             result = ECONTAINER_SLOTS_INVALID;
         } else {
             result = check_references(io, geometry, &initial, false);
@@ -505,21 +557,25 @@ econtainer_slots_result_t econtainer_slots_load(
 
 econtainer_slots_result_t econtainer_slots_reconcile(
     const econtainer_slots_io_t *io, const econtainer_slots_geometry_t *geometry,
-    const uint8_t running_firmware_sha256[32], econtainer_slots_state_t *state,
+    const econtainer_slot_firmware_set_t *firmware_set, econtainer_slots_state_t *state,
     econtainer_slot_boot_decision_t *decision)
 {
+    if (decision != NULL) {
+        *decision = ECONTAINER_SLOT_BOOT_BLOCKED;
+    }
+    if (state != NULL) {
+        memset(state, 0, sizeof(*state));
+    }
     if (!io_valid(io) || !econtainer_slots_geometry_valid(geometry) ||
-        running_firmware_sha256 == NULL || state == NULL || decision == NULL) {
+        !firmware_set_valid(firmware_set) || state == NULL || decision == NULL) {
         return ECONTAINER_SLOTS_INVALID;
     }
-    *decision = ECONTAINER_SLOT_BOOT_BLOCKED;
-    memset(state, 0, sizeof(*state));
     if (!io->lock(io->context)) {
         return ECONTAINER_SLOTS_BUSY;
     }
     econtainer_slots_result_t result = load_locked(io, geometry, state);
     if (result == ECONTAINER_SLOTS_OK &&
-        binding_for_firmware(state, running_firmware_sha256) < 0) {
+        !firmware_set_matches(state, firmware_set)) {
         result = ECONTAINER_SLOTS_CONFLICT;
     }
     if (result == ECONTAINER_SLOTS_OK) {
@@ -550,14 +606,15 @@ econtainer_slots_result_t econtainer_slots_reconcile(
 
 econtainer_slots_result_t econtainer_slots_reserve(
     const econtainer_slots_io_t *io, const econtainer_slots_geometry_t *geometry,
-    uint32_t expected_sequence, const uint8_t running_firmware_sha256[32],
+    uint32_t expected_sequence, const econtainer_slot_firmware_set_t *firmware_set,
     const econtainer_slot_operation_t *operation, econtainer_slots_state_t *state)
 {
     if (!io_valid(io) || !econtainer_slots_geometry_valid(geometry) ||
-        running_firmware_sha256 == NULL || operation == NULL || state == NULL ||
+        !firmware_set_valid(firmware_set) || operation == NULL || state == NULL ||
         all_zero(operation->operation_id, sizeof(operation->operation_id)) ||
         all_zero(operation->package_sha256, 32) ||
-        memcmp(operation->target_firmware_sha256, running_firmware_sha256, 32) != 0 ||
+        memcmp(operation->target_firmware_sha256,
+               firmware_set->running_firmware_sha256, 32) != 0 ||
         operation->slot != 0U || operation->package_size_bytes == 0U ||
         operation->guest_abi_version == 0U || operation->data_schema_version == 0U ||
         !all_zero(operation->trial_boot_id, sizeof(operation->trial_boot_id))) {
@@ -568,8 +625,13 @@ econtainer_slots_result_t econtainer_slots_reserve(
     }
     econtainer_slots_state_t current;
     econtainer_slots_result_t result = begin_locked(io, geometry, expected_sequence, &current);
+    if (result == ECONTAINER_SLOTS_OK &&
+        !firmware_set_matches(&current, firmware_set)) {
+        result = ECONTAINER_SLOTS_CONFLICT;
+    }
     if (result == ECONTAINER_SLOTS_OK) {
-        const int index = binding_for_firmware(&current, running_firmware_sha256);
+        const int index = binding_for_firmware(&current,
+            firmware_set->running_firmware_sha256);
         if (index < 0 ||
             (current.bindings[index].package_present &&
              current.bindings[index].data_schema_version != operation->data_schema_version)) {

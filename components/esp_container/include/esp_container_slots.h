@@ -87,6 +87,17 @@ typedef struct {
 } econtainer_slots_state_t;
 
 /*
+ * Base supplies exact bootable firmware digests from real app/OTA state while
+ * serializing firmware changes with package operations. Only the first
+ * bootable_count entries are populated; running must be one of them.
+ */
+typedef struct {
+    uint8_t bootable_count;
+    uint8_t bootable_firmware_sha256[ECONTAINER_SLOT_BINDING_COUNT][32];
+    uint8_t running_firmware_sha256[32];
+} econtainer_slot_firmware_set_t;
+
+/*
  * write_blob returns true only after committing one NVS key durably.
  * read_blob must fetch the committed view, never an uncommitted handle cache.
  */
@@ -128,9 +139,10 @@ typedef enum {
 
 bool econtainer_slots_geometry_valid(const econtainer_slots_geometry_t *geometry);
 
-/* Explicit first installation/migration only; absent blob must be distinguished from damage. */
+/* Explicit first installation/migration; bindings must equal the actual firmware set. */
 econtainer_slots_result_t econtainer_slots_initialize(
     const econtainer_slots_io_t *io, const econtainer_slots_geometry_t *geometry,
+    const econtainer_slot_firmware_set_t *firmware_set,
     const econtainer_slot_binding_t bindings[ECONTAINER_SLOT_BINDING_COUNT]);
 
 econtainer_slots_result_t econtainer_slots_load(
@@ -142,18 +154,21 @@ econtainer_slots_result_t econtainer_slots_load(
  * damaged, return its IO/UNTRUSTED error while preserving state and setting
  * BOOT_RECOVER_CONFIRMED_CANDIDATE_INVALID. That decision allows only the
  * separately verified old confirmed binding; it forbids candidate progress
- * and further erasure until the operation is explicitly canceled.
+ * and further erasure until the operation is explicitly canceled. A mismatch
+ * with the real bootable firmware set blocks startup; it is not auto-migrated.
  */
 econtainer_slots_result_t econtainer_slots_reconcile(
     const econtainer_slots_io_t *io, const econtainer_slots_geometry_t *geometry,
-    const uint8_t running_firmware_sha256[32], econtainer_slots_state_t *state,
+    const econtainer_slot_firmware_set_t *firmware_set, econtainer_slots_state_t *state,
     econtainer_slot_boot_decision_t *decision);
 
-/* Reserve an unreferenced slot in the durable blob BEFORE the caller may erase it. */
+/*
+ * Reserve an unreferenced slot in the durable blob BEFORE the caller may erase
+ * it. The firmware set must match both persisted bindings exactly.
+ */
 econtainer_slots_result_t econtainer_slots_reserve(
     const econtainer_slots_io_t *io, const econtainer_slots_geometry_t *geometry,
-    uint32_t expected_sequence,
-    const uint8_t running_firmware_sha256[32],
+    uint32_t expected_sequence, const econtainer_slot_firmware_set_t *firmware_set,
     const econtainer_slot_operation_t *operation,
     econtainer_slots_state_t *state);
 
