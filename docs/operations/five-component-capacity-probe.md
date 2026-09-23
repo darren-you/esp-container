@@ -1,5 +1,13 @@
 # 五组件 C3/4 MiB 仓外容量原型：2026-09-23
 
+## 2026-09-24 当前源码静态复测
+
+沿用仓外组合工程和临时 RSA-3072 测试键，更新到公开 `esp-base@ecf1539ee90b5c256df0bae6004d27b0b2683de5`、`esp-frp@9158b7f2e2c555a14636aed26b5189902152d19e`、`esp-mqtt@d099d0ad8d41cb2e5f7d0849baaae98bb7a3d748`、`esp-ota@bae8d13ca5f99c730c667bc55d6ea6a0d883e608`，以及本仓合并的流式验包、Wasm 静态授权和三包槽源码 `0df04118023e6be1c3bcb75f82fff061cb3c45f3`。SDK 为公开 `esp-idf@855937cf9dcee13ee9c423fb0319238cdc8d53fd`，其 lwIP 检出为 `2758df4cd3666b3b2a5b53830148379326425c0d`，WAMR 仍固定 `a34d721b630213f59fde0b40cebbb980903660e8`。
+
+仓外 `capacity_references.c` 的不可执行 `volatile` 门保留了 FRP TLS、MQTT start、OTA HTTPS、Container 流式验包、Wasm 静态授权、三槽 `reconcile`/`write_and_prepare` 和 WAMR Classic 调用路径。固定 SDK 的 C3 链接 map 已逐项核对这些符号；临时签名镜像仍为 `0x121000`（1,183,744 字节），SHA-256 为 `e3298138c8ae38aa5c3be6278933aba7feb2e5db74d011850553c615c969c312`，`espsecure verify-signature --version 2` 通过。`0x140000` 双 app 槽布局在此镜像下各留 `0x1f000`，三包槽仍只是假设的 `0x60000` 几何。与下文 2026-09-23 原型相比，当前 Base 已删除旧 MQTT 运行层；本轮没有依靠临时移除生产组件解决链接冲突。
+
+这仍是静态链接与分区算术，不执行真实 FRP/MQTT/OTA/guest 会话，不证明 Flash 擦写或跨 boot 三槽恢复，也没有 C3 实板 heap、最大连续块、网络并发或分区迁移结果。P6-03 仍未验收；仓外探针和测试签名镜像不得刷板。
+
 ## 判定
 
 P6-03 **未验收**。仓外工程把 Base 正常应用与 FRP、MQTT、OTA、Container 的代表性运行入口链接成一份 ESP32-C3 固件，并用临时 RSA-3072 密钥签名。签名镜像为 `0x121000`（1,183,744 字节）。在保留现有 NVS、otadata、coredump 和 `base_store` 后，4 MiB 可以画出双固件加三包槽的分区表，但按当前镜像取几何上限时两个固件槽没有增长余量；当前 host 默认的 512 KiB Wasm 打成包也超过该槽。另一个留余量布局只证明分区几何与当前镜像可以共存，不是产品包限额或迁移方案。
