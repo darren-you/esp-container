@@ -6,7 +6,8 @@ add_library(esp_container STATIC
     components/esp_container/src/wasm_scan.c
     components/esp_container/src/package_wasm.c
     components/esp_container/src/package_stream.c
-    components/esp_container/src/package_crypto.c)
+    components/esp_container/src/package_crypto.c
+    components/esp_container/src/slots.c)
 target_include_directories(esp_container PUBLIC components/esp_container/include)
 target_include_directories(esp_container PRIVATE components/esp_container/src)
 target_link_libraries(esp_container PUBLIC OpenSSL::Crypto)
@@ -31,6 +32,10 @@ if(BUILD_TESTING)
     target_link_libraries(wasm_scan_test PRIVATE esp_container)
     target_compile_options(wasm_scan_test PRIVATE -Wall -Wextra -Werror -UNDEBUG)
     add_test(NAME wasm_scan COMMAND wasm_scan_test)
+    add_executable(slots_test tests/slots_test.c)
+    target_link_libraries(slots_test PRIVATE esp_container)
+    target_compile_options(slots_test PRIVATE -Wall -Wextra -Werror -Wconversion -UNDEBUG)
+    add_test(NAME slots COMMAND slots_test)
 
     set(ESP_CONTAINER_WAMR_SOURCE "" CACHE PATH "Path to the WAMR source fetched by the locked C3 example")
     if(ESP_CONTAINER_WAMR_SOURCE)

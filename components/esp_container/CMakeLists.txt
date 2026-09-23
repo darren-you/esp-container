@@ -1,5 +1,5 @@
 idf_component_register(SRCS "src/wasm_scan.c" "src/package_wasm.c" "src/runtime.c"
-    "src/package_stream.c" "src/package_crypto.c"
+    "src/package_stream.c" "src/package_crypto.c" "src/slots.c"
     INCLUDE_DIRS "include" PRIV_INCLUDE_DIRS "src"
     PRIV_REQUIRES wasm-micro-runtime esp_timer mbedtls)
 if(NOT CMAKE_BUILD_EARLY_EXPANSION)

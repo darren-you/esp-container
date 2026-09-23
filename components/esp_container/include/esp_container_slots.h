@@ -1,0 +1,184 @@
+#ifndef ESP_CONTAINER_SLOTS_H
+#define ESP_CONTAINER_SLOTS_H
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#define ECONTAINER_SLOT_COUNT 3U
+#define ECONTAINER_SLOT_BINDING_COUNT 2U
+#define ECONTAINER_SLOT_BLOB_BYTES 288U
+#define ECONTAINER_SLOT_OPERATION_ID_BYTES 16U
+#define ECONTAINER_SLOT_BOOT_ID_BYTES 16U
+
+typedef enum {
+    ECONTAINER_SLOTS_OK = 0,
+    ECONTAINER_SLOTS_EMPTY,
+    ECONTAINER_SLOTS_INVALID,
+    ECONTAINER_SLOTS_IO_FAILED,
+    ECONTAINER_SLOTS_UNCERTAIN,
+    ECONTAINER_SLOTS_BUSY,
+    ECONTAINER_SLOTS_NO_SPACE,
+    ECONTAINER_SLOTS_CONFLICT,
+    ECONTAINER_SLOTS_UNTRUSTED,
+} econtainer_slots_result_t;
+
+typedef enum {
+    ECONTAINER_SLOT_BLOB_FOUND = 0,
+    ECONTAINER_SLOT_BLOB_NOT_FOUND,
+    ECONTAINER_SLOT_BLOB_READ_FAILED,
+} econtainer_slot_blob_result_t;
+
+typedef enum {
+    ECONTAINER_SLOT_IDLE = 0,
+    ECONTAINER_SLOT_WRITING,
+    ECONTAINER_SLOT_PREPARED,
+    ECONTAINER_SLOT_TRIAL_STARTED,
+    ECONTAINER_SLOT_HEALTH_VERIFIED,
+    ECONTAINER_SLOT_CONFIRMED,
+    ECONTAINER_SLOT_ABORTED,
+} econtainer_slot_phase_t;
+
+typedef struct {
+    uint32_t offset_bytes;
+    uint32_t size_bytes;
+} econtainer_slot_region_t;
+
+typedef struct {
+    uint32_t partition_offset_bytes;
+    uint32_t partition_size_bytes;
+    uint32_t erase_unit_bytes;
+    uint32_t write_unit_bytes;
+    econtainer_slot_region_t slots[ECONTAINER_SLOT_COUNT];
+} econtainer_slots_geometry_t;
+
+/* One entry per independently bootable firmware digest. An absent package is explicit. */
+typedef struct {
+    bool present;
+    bool package_present;
+    uint8_t slot;
+    uint8_t firmware_sha256[32];
+    uint8_t package_sha256[32];
+    uint32_t package_size_bytes;
+    uint32_t guest_abi_version;
+    uint32_t data_schema_version;
+} econtainer_slot_binding_t;
+
+typedef struct {
+    uint8_t operation_id[ECONTAINER_SLOT_OPERATION_ID_BYTES];
+    uint8_t target_firmware_sha256[32];
+    uint8_t package_sha256[32];
+    uint8_t slot;
+    uint32_t package_size_bytes;
+    uint32_t guest_abi_version;
+    uint32_t data_schema_version;
+    uint8_t trial_boot_id[ECONTAINER_SLOT_BOOT_ID_BYTES];
+} econtainer_slot_operation_t;
+
+typedef struct {
+    uint32_t sequence;
+    econtainer_slot_binding_t bindings[ECONTAINER_SLOT_BINDING_COUNT];
+    econtainer_slot_phase_t phase;
+    econtainer_slot_operation_t operation;
+} econtainer_slots_state_t;
+
+/* write_blob must replace exactly one NVS key and commit it before returning. */
+typedef struct {
+    bool (*lock)(void *context);
+    void (*unlock)(void *context);
+    econtainer_slot_blob_result_t (*read_blob)(void *context,
+                                                uint8_t blob[ECONTAINER_SLOT_BLOB_BYTES]);
+    bool (*write_blob)(void *context,
+                       const uint8_t blob[ECONTAINER_SLOT_BLOB_BYTES]);
+    bool (*flash_read)(void *context, uint32_t offset_bytes,
+                       uint8_t *destination, size_t size_bytes);
+    bool (*flash_erase)(void *context, uint32_t offset_bytes, uint32_t size_bytes);
+    bool (*flash_write)(void *context, uint32_t offset_bytes,
+                        const uint8_t *source, size_t size_bytes);
+    void *context;
+} econtainer_slots_io_t;
+
+typedef bool (*econtainer_slot_read_fn)(void *context, size_t relative_offset_bytes,
+                                         uint8_t *destination, size_t size_bytes);
+typedef bool (*econtainer_slot_source_fn)(void *context, size_t relative_offset_bytes,
+                                           uint8_t *destination, size_t size_bytes);
+/* Must verify the readback package signature, Wasm/profile, product authorization and grant. */
+typedef bool (*econtainer_slot_validate_fn)(void *context,
+                                             econtainer_slot_read_fn read_fn,
+                                             void *read_context,
+                                             size_t package_size_bytes);
+
+typedef enum {
+    ECONTAINER_SLOT_BOOT_BLOCKED = 0,
+    ECONTAINER_SLOT_BOOT_CONFIRMED,
+    ECONTAINER_SLOT_BOOT_RECOVER_CONFIRMED,
+} econtainer_slot_boot_decision_t;
+
+bool econtainer_slots_geometry_valid(const econtainer_slots_geometry_t *geometry);
+
+/* Explicit first installation/migration only; absent blob must be distinguished from damage. */
+econtainer_slots_result_t econtainer_slots_initialize(
+    const econtainer_slots_io_t *io, const econtainer_slots_geometry_t *geometry,
+    const econtainer_slot_binding_t bindings[ECONTAINER_SLOT_BINDING_COUNT]);
+
+econtainer_slots_result_t econtainer_slots_load(
+    const econtainer_slots_io_t *io, const econtainer_slots_geometry_t *geometry,
+    econtainer_slots_state_t *state);
+
+/* Conservatively hash every confirmed reference and every complete pending candidate. */
+econtainer_slots_result_t econtainer_slots_reconcile(
+    const econtainer_slots_io_t *io, const econtainer_slots_geometry_t *geometry,
+    const uint8_t running_firmware_sha256[32], econtainer_slots_state_t *state,
+    econtainer_slot_boot_decision_t *decision);
+
+/* Reserve an unreferenced slot in the durable blob BEFORE the caller may erase it. */
+econtainer_slots_result_t econtainer_slots_reserve(
+    const econtainer_slots_io_t *io, const econtainer_slots_geometry_t *geometry,
+    uint32_t expected_sequence,
+    const uint8_t running_firmware_sha256[32],
+    const econtainer_slot_operation_t *operation,
+    econtainer_slots_state_t *state);
+
+/* Erase/write only the reserved slot, hash full Flash readback, then validate it. */
+econtainer_slots_result_t econtainer_slots_write_and_prepare(
+    const econtainer_slots_io_t *io, const econtainer_slots_geometry_t *geometry,
+    uint32_t expected_sequence, econtainer_slot_source_fn source_fn,
+    void *source_context, econtainer_slot_validate_fn validate_fn,
+    void *validate_context, econtainer_slots_state_t *state);
+
+/* Product-only trial: caller has already stopped/reclaimed the previous instance. */
+econtainer_slots_result_t econtainer_slots_begin_trial(
+    const econtainer_slots_io_t *io, const econtainer_slots_geometry_t *geometry,
+    uint32_t expected_sequence, const uint8_t running_firmware_sha256[32],
+    const uint8_t boot_id[ECONTAINER_SLOT_BOOT_ID_BYTES],
+    econtainer_slots_state_t *state);
+
+econtainer_slots_result_t econtainer_slots_mark_healthy(
+    const econtainer_slots_io_t *io, const econtainer_slots_geometry_t *geometry,
+    uint32_t expected_sequence,
+    const uint8_t boot_id[ECONTAINER_SLOT_BOOT_ID_BYTES],
+    econtainer_slots_state_t *state);
+
+/* Product-only commit; health proof and actual firmware must match this operation. */
+econtainer_slots_result_t econtainer_slots_confirm(
+    const econtainer_slots_io_t *io, const econtainer_slots_geometry_t *geometry,
+    uint32_t expected_sequence, const uint8_t running_firmware_sha256[32],
+    const uint8_t boot_id[ECONTAINER_SLOT_BOOT_ID_BYTES],
+    econtainer_slots_state_t *state);
+
+/* Explicit cancellation; a trial may be canceled only after a different boot. */
+econtainer_slots_result_t econtainer_slots_abandon(
+    const econtainer_slots_io_t *io, const econtainer_slots_geometry_t *geometry,
+    uint32_t expected_sequence,
+    const uint8_t boot_id[ECONTAINER_SLOT_BOOT_ID_BYTES],
+    econtainer_slots_state_t *state);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif
