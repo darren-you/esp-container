@@ -4,23 +4,9 @@
 #include <string.h>
 
 #include "esp_container.h"
-#include "esp_heap_caps.h"
-#include "esp_log.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "bh_platform.h"
 #include "wasm_export.h"
 
-#if WASM_ENABLE_INTERP != 1 || WASM_ENABLE_FAST_INTERP != 0 || \
-    WASM_ENABLE_AOT != 0 || WASM_ENABLE_INSTRUCTION_METERING != 1 || \
-    WASM_ENABLE_LIBC_WASI != 0 || WASM_ENABLE_LIB_PTHREAD != 0 || \
-    WASM_ENABLE_BULK_MEMORY != 0
-#error "The C3 probe requires the bounded WAMR Classic profile"
-#endif
-
-static const char *const TAG = "container-probe";
-
-/* Freestanding standard Wasm v1 fixtures: () -> i32, no imports/start. */
+/* Standard Wasm v1 fixtures with no imports, start or implicit constructors. */
 static uint8_t return_zero[] = {
     0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
     0x01, 0x05, 0x01, 0x60, 0x00, 0x01, 0x7f,
@@ -36,35 +22,29 @@ static uint8_t endless_loop[] = {
     0x0a, 0x0b, 0x01, 0x09, 0x00, 0x03, 0x40, 0x0c, 0x00, 0x0b, 0x41, 0x00, 0x0b,
 };
 
-static void report_heap(const char *phase)
-{
-    ESP_LOGI(TAG, "%s free=%u largest=%u", phase,
-             (unsigned)heap_caps_get_free_size(MALLOC_CAP_8BIT),
-             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
-}
-
-static bool exercise(uint8_t *bytes, uint32_t size, const char *export_name, bool expect_success)
+static bool exercise(uint8_t *bytes, uint32_t size, const char *export_name,
+                     bool expect_success)
 {
     char error[128] = {0};
     if (econtainer_wasm_check(bytes, size) != ECONTAINER_WASM_OK) {
-        ESP_LOGE(TAG, "module scan rejected %s", export_name);
+        fprintf(stderr, "%s: scanner rejected fixture\n", export_name);
         return false;
     }
     wasm_module_t module = wasm_runtime_load(bytes, size, error, sizeof(error));
-    if (!module) {
-        ESP_LOGE(TAG, "load %s: %s", export_name, error);
+    if (module == NULL) {
+        fprintf(stderr, "%s: load failed: %s\n", export_name, error);
         return false;
     }
     wasm_module_inst_t instance = wasm_runtime_instantiate(module, 4096, 0, error, sizeof(error));
-    if (!instance) {
-        ESP_LOGE(TAG, "instantiate %s: %s", export_name, error);
+    if (instance == NULL) {
+        fprintf(stderr, "%s: instantiate failed: %s\n", export_name, error);
         wasm_runtime_unload(module);
         return false;
     }
     wasm_exec_env_t environment = wasm_runtime_create_exec_env(instance, 4096);
     wasm_function_inst_t function = wasm_runtime_lookup_function(instance, export_name);
     bool passed = false;
-    if (environment && function) {
+    if (environment != NULL && function != NULL) {
         uint32_t result[1] = {UINT32_MAX};
         wasm_runtime_set_instruction_count_limit(environment, 1000);
         const bool call_ok = wasm_runtime_call_wasm(environment, function, 0, result);
@@ -73,11 +53,10 @@ static bool exercise(uint8_t *bytes, uint32_t size, const char *export_name, boo
                      ? call_ok && result[0] == 0 && exception == NULL
                      : !call_ok && exception != NULL &&
                            strcmp(exception, "Exception: instruction limit exceeded") == 0;
-        ESP_LOGI(TAG, "%s call_ok=%d result=%u exception=%s", export_name,
-                 (int)call_ok, (unsigned)result[0],
-                 exception ? exception : "none");
+        fprintf(stderr, "%s: call_ok=%d result=%u exception=%s\n", export_name,
+                (int)call_ok, (unsigned)result[0], exception ? exception : "none");
     }
-    if (environment) {
+    if (environment != NULL) {
         wasm_runtime_destroy_exec_env(environment);
     }
     wasm_runtime_deinstantiate(instance);
@@ -85,32 +64,14 @@ static bool exercise(uint8_t *bytes, uint32_t size, const char *export_name, boo
     return passed;
 }
 
-static void probe_task(void *unused)
+int main(void)
 {
-    (void)unused;
-    RuntimeInitArgs args;
-    memset(&args, 0, sizeof(args));
-    args.mem_alloc_type = Alloc_With_Allocator;
-    args.mem_alloc_option.allocator.malloc_func = (void *)os_malloc;
-    args.mem_alloc_option.allocator.realloc_func = (void *)os_realloc;
-    args.mem_alloc_option.allocator.free_func = (void *)os_free;
-    report_heap("before");
-    if (!wasm_runtime_full_init(&args)) {
-        ESP_LOGE(TAG, "WAMR initialization failed");
-        vTaskDelete(NULL);
-        return;
+    if (!wasm_runtime_init()) {
+        fprintf(stderr, "WAMR initialization failed\n");
+        return 1;
     }
     const bool normal = exercise(return_zero, sizeof(return_zero), "run", true);
     const bool bounded = exercise(endless_loop, sizeof(endless_loop), "looping", false);
     wasm_runtime_destroy();
-    report_heap("after");
-    ESP_LOGI(TAG, "normal=%d instruction_limit=%d", (int)normal, (int)bounded);
-    vTaskDelete(NULL);
-}
-
-void app_main(void)
-{
-    if (xTaskCreate(probe_task, "container-probe", 8192, NULL, 5, NULL) != pdPASS) {
-        ESP_LOGE(TAG, "probe task allocation failed");
-    }
+    return normal && bounded ? 0 : 1;
 }

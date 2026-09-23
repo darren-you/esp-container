@@ -30,6 +30,17 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
+完成 C3 样例构建并核对 `dependencies.lock` 后，可用其锁定的 WAMR 源码运行真实 Classic 解释器主机测试：
+
+```bash
+cmake -S . -B build-wamr -DBUILD_TESTING=ON \
+  -DESP_CONTAINER_WAMR_SOURCE="$PWD/examples/c3-runtime/managed_components/wasm-micro-runtime"
+cmake --build build-wamr
+ctest --test-dir build-wamr --output-on-failure
+```
+
+该测试要求正常函数返回 0，死循环必须以精确的指令额度异常终止；它不能代替 C3 实际运行。
+
 host 工具的包格式和使用步骤见 [包工具](tools/README.md)。[C3 原型](examples/c3-runtime/README.md)需要固定 SDK；原样 WAMR 2.4.4 与固定 IDF 6.1 的编译问题已在公开 fork 的源码中直接修复，具体构建结果见[开发检查点](docs/operations/development-checkpoint.md)。本地构建不会写板。当前代码没有可发布的产品包运行/安装链路，不要把主机验包成功当作设备安全启动。
 
 ## 项目边界
