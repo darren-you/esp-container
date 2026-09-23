@@ -92,6 +92,7 @@ GDB 在两次实例化的 `wasm_allocate_linear_memory` 都读到单次连续申
 | pthread 回收后 | 104,800 | 94,208 | 14,660 |
 
 两次都输出 `open=0 init=0 event=0 stop=0 guest=3`。第二次在 guest 存活时最大连续块仅 7,680 字节，比旧 Base 链接切片明显更紧；这是**无 Wi-Fi 配置、无 FRPS/Broker 连接、无 OTA 下载**时的测量。QEMU 的 Wi-Fi 校准与真实射频、网络/TLS 并发和实板堆布局不同，不能据此宣布 64 KiB profile 可交付，更不能冻结三包槽、业务尺寸或触发分区迁移。P6-03 仍未验收，后续需在实际装配和负载下测量最小 free heap、最大连续块与分配失败。
+当前 `esp-frp@9158b7f` 的 `efrp_session_create` 对 AEAD 接收记录执行一次 `calloc(1, EFRP_AEAD_RX_BYTES)`，宏值为 **65,552 字节**。在上述 guest 存活的 QEMU 时点，最大连续块 7,680 字节，故该镜像无法同时建立此 FRP 会话；尚未计入 TLS、MQTT 或业务额外资源。此结论只针对本轮 QEMU 镜像与负载，真实 C3 板卡需单独测量。它是首版硬件容量和并行能力的明确待裁决条件，不能靠静态链接、停掉安全校验或复用旧镜像当作已通过。
 
 ## 后续边界
 
