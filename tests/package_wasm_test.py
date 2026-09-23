@@ -18,63 +18,11 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import product_package as pkg  # noqa: E402
+from wasm_fixture import HEADER, TYPES, leb, module, name, section  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = json.loads((ROOT / "examples/counter/spec.example.json").read_text())
-HEADER = b"\0asm\x01\0\0\0"
-TYPES = (b"\x05\x60\x00\x01\x7f\x60\x02\x7f\x7f\x01\x7f"
-         b"\x60\x00\x01\x7e\x60\x02\x7f\x7f\x01\x7e"
-         b"\x60\x01\x7e\x01\x7f")
-
-
-def leb(number: int) -> bytes:
-    output = bytearray()
-    while True:
-        octet = number & 0x7F
-        number >>= 7
-        output.append(octet | (0x80 if number else 0))
-        if number == 0:
-            return bytes(output)
-
-
-def section(kind: int, content: bytes) -> bytes:
-    return bytes((kind,)) + leb(len(content)) + content
-
-
-def name(value: str) -> bytes:
-    encoded = value.encode("ascii")
-    return leb(len(encoded)) + encoded
-
-
-def module(imports: tuple[str, ...] = (), *, event_type: int = 1,
-           memory_flags: int = 1, memory_max: int = 2,
-           duplicate_export: bool = False, code_count: int = 3,
-           extra: bytes = b"") -> bytes:
-    type_by_name = {"monotonic_ms": 2, "log": 1,
-                    "timer_start": 3, "timer_cancel": 4}
-    imported = (leb(len(imports)) + b"".join(
-        name("econtainer") + name(field) + b"\0" + leb(type_by_name.get(field, 2))
-        for field in imports)) if imports else b""
-    function_types = b"\x03\0" + leb(event_type) + b"\0"
-    memory = b"\x01" + leb(memory_flags) + b"\x02" + (
-        leb(memory_max) if memory_flags & 1 else b"")
-    exported = [("econtainer_init", 0, len(imports)),
-                ("econtainer_on_event", 0, len(imports) + 1),
-                ("econtainer_stop", 0, len(imports) + 2),
-                ("memory", 2, 0)]
-    if duplicate_export:
-        exported[1] = ("econtainer_init", 0, len(imports) + 1)
-    exports = leb(len(exported)) + b"".join(
-        name(field) + bytes((kind,)) + leb(index) for field, kind, index in exported)
-    body = b"\0\x41\0\x0b"
-    code = leb(code_count) + (leb(len(body)) + body) * code_count
-    return (HEADER + section(1, TYPES) +
-            (section(2, imported) if imports else b"") +
-            section(3, function_types) + section(5, memory) +
-            section(7, exports) + section(10, code) + extra)
-
-
 def signed_package(private: Path, wasm: bytes,
                    spec: dict[str, object]) -> bytes:
     record = copy.deepcopy(spec)
@@ -170,19 +118,63 @@ def main() -> None:
         run(wrong_timer, timer_spec, grant=4, expected=2)
         too_little_memory = copy.deepcopy(SPEC)
         too_little_memory["limits"]["memory_limit_bytes"] = 65536
+        try:
+            pkg.create_manifest(too_little_memory, none)
+            raise AssertionError("host accepted a Wasm memory maximum above the signed limit")
+        except pkg.PackageError:
+            pass
         run(none, too_little_memory, expected=1)
         too_much_stack = copy.deepcopy(SPEC)
         too_much_stack["limits"]["stack_limit_bytes"] = 8192
         run(none, too_much_stack, expected=3)
         unknown_spec = copy.deepcopy(SPEC)
         unknown_spec["required_capabilities"] = ["gpio"]
+        try:
+            pkg.create_manifest(unknown_spec, none)
+            raise AssertionError("host accepted a device-unsupported capability")
+        except pkg.PackageError:
+            pass
         run(none, unknown_spec, expected=2)
         bad_abi = copy.deepcopy(SPEC)
         bad_abi["guest_abi_version"] = 2
+        try:
+            pkg.create_manifest(bad_abi, none)
+            raise AssertionError("host accepted a device-unsupported ABI")
+        except pkg.PackageError:
+            pass
         run(none, bad_abi, expected=2)
         bad_profile = copy.deepcopy(SPEC)
         bad_profile["runtime_profile"] = "aot-v1"
+        try:
+            pkg.create_manifest(bad_profile, none)
+            raise AssertionError("host accepted a device-unsupported runtime profile")
+        except pkg.PackageError:
+            pass
         run(none, bad_profile, expected=2)
+
+        # These bytes used to pass the old host shape check, but the signed
+        # device scanner rejects the same modules before activation.
+        memory_section = section(5, b"\x01\x01\x02\x02")
+        code_section = section(10, b"\x03" + b"\x04\0\x41\0\x0b" * 3)
+        deterministic_rejections = (
+            ("target_features", module(extra=section(0, name("target_features"))), 2),
+            ("missing_abi_sections", HEADER, 1),
+            ("table", none.replace(memory_section, section(4, b"\0") + memory_section, 1), 2),
+            ("element", none.replace(code_section, section(9, b"\0") + code_section, 1), 2),
+            ("empty_imports", none.replace(section(3, b"\x03\0\x01\0"),
+                                           section(2, b"") + section(3, b"\x03\0\x01\0"), 1), 1),
+            ("entry_signature", module(event_type=0), 1),
+            ("code_count", module(code_count=2), 1),
+            ("memory_limit", module(memory_max=3), 1),
+        )
+        for label, wasm, result in deterministic_rejections:
+            try:
+                pkg.create_manifest(SPEC, wasm)
+            except pkg.PackageError:
+                pass
+            else:
+                raise AssertionError(f"host accepted device-rejected Wasm: {label}")
+            run(wasm, expected=result)
 
         malformed = [
             module(event_type=0), module(memory_flags=3),
@@ -205,6 +197,8 @@ def main() -> None:
                 pkg._wasm(wasm)
             except pkg.PackageError:
                 pass
+            else:
+                raise AssertionError(f"host accepted malformed Wasm {index}")
             with_index = f"{index}: {wasm.hex()[:40]}"
             try:
                 run(wasm, expected=2 if index in (3, 4, 5, 6, 11, 12, 14) else 1)

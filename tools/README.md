@@ -25,7 +25,7 @@ python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ```
 
-以下仅示例本地测试材料；不要把真实签名私钥提交到仓库。[counter 样例](../examples/counter/README.md)提供锁定 wasi-sdk 33 的 `tools/counter_guest.py build/check` 入口。本打包工具只做初始 Wasm 外形检查，不执行 counter 的精确 ABI/profile 检查。
+以下仅示例本地测试材料；不要把真实签名私钥提交到仓库。[counter 样例](../examples/counter/README.md)提供锁定 wasi-sdk 33 的 `tools/counter_guest.py build/check` 入口。本打包工具在 `manifest`、`pack` 和 `verify` 时检查设备流式扫描器可从签名清单和 Wasm 字节确定的 `wamr-classic-v1`、guest ABI v1、能力声明、导入、四项导出、函数类型、内存上限、代码数量与 section profile；counter 自身更窄的固定编译配方仍由样例检查器负责。平台独立授权和 WAMR 指令加载仍须由设备执行。
 
 ```bash
 .venv/bin/python tools/product_package.py manifest --spec examples/counter/spec.example.json --wasm dist/app.wasm --output dist/manifest.json
@@ -38,6 +38,6 @@ python3 -m venv .venv
 
 Wasm 初筛只接受 `econtainer.monotonic_ms() -> i64`、`econtainer.log(i32, i32) -> i32`、`econtainer.timer_start(i32, i32) -> i64` 和 `econtainer.timer_cancel(i64) -> i32` 四项精确函数导入；实际导入分别要求已签名 manifest 的 `monotonic-time`、`log`、`timer` 能力。manifest 声明只表达包需求，设备最终授权与定时器数量上限仍由平台策略决定；本主机工具没有设备安装或授予权限的入口。
 
-当前 host 编码回归向量使用 `examples/counter/spec.example.json` 的清单字段、8 字节 Wasm v1 空模块，以及 `bytes(range(256)) + bytes(range(128))` 作为固定的 384 字节占位签名。生成的规范 manifest 长 545 字节、SHA-256 为 `0e6cba55543b3bd443881f08dc8a0c2d431d0376fe04c3ab901bb858cc0da6e4`；归档长 10,240 字节、SHA-256 为 `f72ef6b500a1dee059625df8772b2e5ad5c9d7a4fd5adf04e4fb1ce0271e6c67`。此占位签名不具备密码学效力，向量仅用于锁住当前主机编码行为；P6-05 的最终包容量、ABI 和发布签名合同仍待验证。
+当前 host 编码回归向量使用 `examples/counter/spec.example.json` 的清单字段、`tests/wasm_fixture.py` 生成的 136 字节最小有效 Classic ABI 模块，以及 `bytes(range(256)) + bytes(range(128))` 作为固定的 384 字节占位签名。生成的规范 manifest 长 547 字节、SHA-256 为 `5129170a730993186446ddbf2e61d1ee4bb75aeaeeab61e5a81c9a6a9f7cdd7b`；归档长 10,240 字节、SHA-256 为 `3030f9ff99f35f6ad0f3d4b00f9baf03a51bf3f17122c46e1ce26271362fd1e2`。旧的 8 字节空模块不具备设备所需的 ABI section，现已被主机拒绝。占位签名不具备密码学效力，向量仅用于锁住当前主机编码行为；P6-05 的最终包容量与发布签名合同仍待验证。
 
-当前 `--max-wasm-bytes` 默认 512 KiB 是 host 原型拒绝上限，不是已冻结的 C3 业务包容量。组件已有[只读流式验包及 Wasm 静态检查切片](../docs/operations/package-stream-checkpoint.md)；设备检查使用验包后得到的签名清单需求，并另外要求平台独立提供能力、内存和栈授权。它尚未接入实际 Flash 包槽、稳定读回、完整设备授权/配额、三包槽或安装 API；本工具的成功结果不能代表设备已可安全安装。
+当前设备扫描器与 host 初筛共同拒绝超过 512 KiB 的 Wasm；`--max-wasm-bytes` 可进一步降低 host 限额，不能提高设备上限。这个上限不是已冻结的 C3 业务包容量。组件已有[只读流式验包及 Wasm 静态检查切片](../docs/operations/package-stream-checkpoint.md)及候选槽签名包回读准入；设备检查使用验包后得到的签名清单需求，并另外要求平台独立提供能力、内存和栈授权。真实设备分区、完整平台授权和安装链路尚未闭合；本工具的成功结果不能代表设备已可安全安装。

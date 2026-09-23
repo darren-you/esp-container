@@ -23,7 +23,8 @@ SIGNATURE_ALGORITHM = "rsa-3072-pss-sha256"
 MEMBERS = ("manifest.json", "signature.bin", "app.wasm")
 MANIFEST_MAX_BYTES = 4096
 SIGNATURE_BYTES = 384
-DEFAULT_MAX_WASM_BYTES = 512 * 1024  # Host prototype only; C3 limit needs P6-03.
+DEVICE_MAX_WASM_BYTES = 512 * 1024  # Device scanner bound; C3 slot capacity needs P6-03.
+DEFAULT_MAX_WASM_BYTES = DEVICE_MAX_WASM_BYTES
 IDENTIFIER = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 LIMIT_KEYS = {
@@ -128,39 +129,58 @@ def _wasm_u32(data: bytes, offset: int, end: int) -> tuple[int, int]:
     raise PackageError("Wasm 整数溢出")
 
 
-def _wasm_imports(types_data: bytes, imports_data: bytes) -> frozenset[str]:
-    import_count, import_offset = _wasm_u32(imports_data, 0, len(imports_data))
-    if import_count == 0:
-        if import_offset != len(imports_data):
-            raise PackageError("非法 Wasm imports 尾部")
-        return frozenset()
-    if not types_data:
-        raise PackageError("Wasm imports 缺少类型节")
-    offset = 0
-    count, offset = _wasm_u32(types_data, offset, len(types_data))
-    types: list[tuple[bytes, bytes]] = []
-    for _ in range(count):
-        if offset >= len(types_data) or types_data[offset] != 0x60:
-            raise PackageError("非法 Wasm imports 类型")
-        offset += 1
-        params, offset = _wasm_u32(types_data, offset, len(types_data))
-        if params > len(types_data) - offset:
-            raise PackageError("截断的 Wasm imports 类型")
-        parameter_types = types_data[offset:offset + params]
-        offset += params
-        results, offset = _wasm_u32(types_data, offset, len(types_data))
-        if results > len(types_data) - offset:
-            raise PackageError("截断的 Wasm imports 类型")
-        types.append((parameter_types, types_data[offset:offset + results]))
-        offset += results
-    if offset != len(types_data):
-        raise PackageError("非法 Wasm imports 类型尾部")
+class _WasmReader:
+    def __init__(self, data: bytes):
+        self.data = data
+        self.offset = 0
 
-    offset = 0
-    count, offset = _wasm_u32(imports_data, offset, len(imports_data))
+    def u32(self) -> int:
+        value, self.offset = _wasm_u32(self.data, self.offset, len(self.data))
+        return value
+
+    def take(self, size: int) -> bytes:
+        if size > len(self.data) - self.offset:
+            raise PackageError("截断的 Wasm section")
+        value = self.data[self.offset:self.offset + size]
+        self.offset += size
+        return value
+
+    def byte(self) -> int:
+        return self.take(1)[0]
+
+    def name(self) -> bytes:
+        return self.take(self.u32())
+
+    def finish(self) -> None:
+        if self.offset != len(self.data):
+            raise PackageError("Wasm section 有尾随数据")
+
+
+def _wasm_types(data: bytes) -> list[tuple[bytes, bytes]]:
+    reader = _WasmReader(data)
+    count = reader.u32()
+    if count > len(data) - reader.offset:
+        raise PackageError("非法 Wasm 类型数量")
+    types = []
+    for _ in range(count):
+        if reader.byte() != 0x60:
+            raise PackageError("只允许 Wasm 函数类型")
+        params = reader.take(reader.u32())
+        results = reader.take(reader.u32())
+        if any(value not in (0x7f, 0x7e, 0x7d, 0x7c) for value in params + results):
+            raise PackageError("不允许的 Wasm 值类型")
+        types.append((params, results))
+    reader.finish()
+    return types
+
+
+def _wasm_imports(types: list[tuple[bytes, bytes]], data: bytes | None) -> tuple[frozenset[str], int]:
+    if data is None:
+        return frozenset(), 0
+    reader = _WasmReader(data)
+    count = reader.u32()
     if count > 4:
         raise PackageError("不允许的 Wasm imports 数量")
-    required: set[str] = set()
     expected = {
         b"monotonic_ms": (b"", b"\x7e", "monotonic-time"),
         b"log": (b"\x7f\x7f", b"\x7f", "log"),
@@ -168,77 +188,124 @@ def _wasm_imports(types_data: bytes, imports_data: bytes) -> frozenset[str]:
         b"timer_cancel": (b"\x7e", b"\x7f", "timer"),
     }
     seen: set[bytes] = set()
+    required: set[str] = set()
     for _ in range(count):
-        names = []
-        for _part in range(2):
-            length, offset = _wasm_u32(imports_data, offset, len(imports_data))
-            if length > len(imports_data) - offset:
-                raise PackageError("截断的 Wasm imports 名称")
-            names.append(imports_data[offset:offset + length])
-            offset += length
-        if offset >= len(imports_data):
-            raise PackageError("截断的 Wasm imports 类型")
-        kind = imports_data[offset]
-        offset += 1
-        if kind != 0 or names[0] != b"econtainer" or names[1] not in expected:
+        module = reader.name()
+        field = reader.name()
+        kind = reader.byte()
+        type_index = reader.u32()
+        if module != b"econtainer" or kind != 0 or field not in expected:
             raise PackageError("不允许的 Wasm imports")
-        type_index, offset = _wasm_u32(imports_data, offset, len(imports_data))
-        params, results, capability = expected[names[1]]
-        if type_index >= len(types) or types[type_index] != (params, results) or names[1] in seen:
+        params, results, capability = expected[field]
+        if field in seen or type_index >= len(types) or types[type_index] != (params, results):
             raise PackageError("Wasm imports 签名或重复项错误")
-        seen.add(names[1])
+        seen.add(field)
         required.add(capability)
-    if offset != len(imports_data):
-        raise PackageError("非法 Wasm imports 尾部")
-    return frozenset(required)
+    reader.finish()
+    return frozenset(required), count
 
 
-def _wasm(data: bytes) -> frozenset[str]:
+def _wasm_functions(data: bytes, type_count: int) -> list[int]:
+    reader = _WasmReader(data)
+    count = reader.u32()
+    if count > len(data) - reader.offset:
+        raise PackageError("非法 Wasm 函数数量")
+    functions = [reader.u32() for _ in range(count)]
+    reader.finish()
+    if any(index >= type_count for index in functions):
+        raise PackageError("Wasm 函数类型索引越界")
+    return functions
+
+
+def _wasm_exports(data: bytes) -> tuple[int, int, int]:
+    reader = _WasmReader(data)
+    if reader.u32() != 4:
+        raise PackageError("Wasm 导出集合与 ABI 不符")
+    expected = {b"econtainer_init": 0, b"econtainer_on_event": 0,
+                b"econtainer_stop": 0, b"memory": 2}
+    exports: dict[bytes, int] = {}
+    for _ in range(4):
+        name = reader.name()
+        kind = reader.byte()
+        index = reader.u32()
+        if name not in expected or name in exports or kind != expected[name] or (
+                name == b"memory" and index != 0):
+            raise PackageError("Wasm 导出集合与 ABI 不符")
+        exports[name] = index
+    reader.finish()
+    if set(exports) != set(expected):
+        raise PackageError("Wasm 导出集合与 ABI 不符")
+    return (exports[b"econtainer_init"], exports[b"econtainer_on_event"],
+            exports[b"econtainer_stop"])
+
+
+def _wasm_memory(data: bytes, max_memory_bytes: int) -> None:
+    reader = _WasmReader(data)
+    count, flags, minimum, maximum = (reader.u32() for _ in range(4))
+    reader.finish()
+    if count != 1 or flags != 1 or minimum == 0 or minimum > maximum or (
+            maximum > max_memory_bytes // 65536):
+        raise PackageError("Wasm 内存超出当前 profile 或清单限额")
+
+
+def _wasm_code(data: bytes, function_count: int) -> None:
+    reader = _WasmReader(data)
+    if reader.u32() != function_count:
+        raise PackageError("Wasm 函数与代码数量不符")
+    for _ in range(function_count):
+        size = reader.u32()
+        body = reader.take(size)
+        if size < 2 or body[-1] != 0x0b:
+            raise PackageError("Wasm 函数体缺少结束指令")
+    reader.finish()
+
+
+def _wasm(data: bytes, *, max_memory_bytes: int = 0xffffffff) -> frozenset[str]:
+    """Mirror the device package scanner's byte-determined Classic/ABI checks."""
+    if len(data) > DEVICE_MAX_WASM_BYTES:
+        raise PackageError("Wasm 超出设备扫描上限")
     if not data.startswith(b"\x00asm\x01\x00\x00\x00"):
         raise PackageError("不是标准 Wasm v1 模块")
-    offset = 8
+    reader = _WasmReader(data[8:])
+    sections: dict[int, bytes] = {}
     last_section = 0
-    types_data = b""
-    imports_data = b""
-    while offset < len(data):
-        section = data[offset]
-        offset += 1
-        size, offset = _wasm_u32(data, offset, len(data))
-        if section > 12 or section == 8:
-            raise PackageError("不允许 Wasm start 或未知 section")
-        if section:
-            if section <= last_section:
-                raise PackageError("Wasm section 重复或乱序")
-            last_section = section
-        if size > len(data) - offset:
-            raise PackageError("截断的 Wasm section")
-        end = offset + size
-        if section == 1:
-            types_data = data[offset:end]
-        elif section == 2:
-            imports_data = data[offset:end]
-        elif section == 7:
-            count, offset = _wasm_u32(data, offset, end)
-            for _ in range(count):
-                length, offset = _wasm_u32(data, offset, end)
-                if length > end - offset:
-                    raise PackageError("截断的 Wasm export")
-                name = data[offset:offset + length]
-                if name in (b"__post_instantiate", b"__wasm_call_ctors", b"_initialize"):
-                    raise PackageError("当前 profile 不允许自动构造入口")
-                offset += length
-                if offset >= end or data[offset] > 3:
-                    raise PackageError("非法 Wasm export 类型")
-                offset += 1
-                _, offset = _wasm_u32(data, offset, end)
-            if offset != end:
-                raise PackageError("非法 Wasm export section")
-        offset = end
-    return _wasm_imports(types_data, imports_data) if imports_data else frozenset()
+    while reader.offset < len(reader.data):
+        section = reader.byte()
+        content = reader.take(reader.u32())
+        if section in (4, 8, 9) or section > 12:
+            raise PackageError("不允许 Wasm start、table、element 或未知 section")
+        if section == 0:
+            if _WasmReader(content).name() == b"target_features":
+                raise PackageError("不允许 Wasm target_features")
+            continue
+        if section <= last_section:
+            raise PackageError("Wasm section 重复或乱序")
+        sections[section] = content
+        last_section = section
+    if not {1, 3, 5, 7, 10}.issubset(sections):
+        raise PackageError("Wasm 缺少设备 ABI 必需 section")
+    types = _wasm_types(sections[1])
+    required, imported_count = _wasm_imports(types, sections.get(2))
+    functions = _wasm_functions(sections[3], len(types))
+    exports = _wasm_exports(sections[7])
+    if len(set(exports)) != 3:
+        raise PackageError("Wasm 三个入口不能复用同一个函数")
+    signatures = ((b"", b"\x7f"), (b"\x7f\x7f", b"\x7f"), (b"", b"\x7f"))
+    for index, signature in zip(exports, signatures, strict=True):
+        if index < imported_count or index - imported_count >= len(functions) or (
+                types[functions[index - imported_count]] != signature):
+            raise PackageError("Wasm 入口签名与 ABI 不符")
+    _wasm_memory(sections[5], max_memory_bytes)
+    _wasm_code(sections[10], len(functions))
+    return required
 
 
 def _check_declared_capabilities(wasm: bytes, record: dict[str, object]) -> None:
-    required = _wasm(wasm)
+    if record["guest_abi_version"] != 1 or record["runtime_profile"] != "wamr-classic-v1":
+        raise PackageError("不支持的 Wasm ABI 或运行 profile")
+    if not set(record["required_capabilities"]).issubset({"monotonic-time", "log", "timer"}):
+        raise PackageError("不支持的 Wasm 能力声明")
+    required = _wasm(wasm, max_memory_bytes=record["limits"]["memory_limit_bytes"])
     if not required.issubset(record["required_capabilities"]):
         raise PackageError("Wasm imports 缺少 manifest required_capabilities 授权")
 

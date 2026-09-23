@@ -17,6 +17,7 @@ from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import product_package as pkg  # noqa: E402
+from wasm_fixture import module, name, section  # noqa: E402
 
 
 def raw_package(manifest: bytes, signature: bytes, wasm: bytes) -> bytes:
@@ -55,7 +56,7 @@ def main() -> None:
             serialization.Encoding.DER, serialization.PublicFormat.PKCS1))
         spec = json.loads((Path(__file__).resolve().parents[1] /
                            "examples/counter/spec.example.json").read_text())
-        wasm = b"\0asm\1\0\0\0"
+        wasm = module()
         manifest = pkg.create_manifest(spec, wasm)
         signature = pkg.sign_manifest(manifest, private, "test-key")
         package = pkg.pack(manifest, signature, wasm, max_wasm_bytes=1024)
@@ -74,7 +75,7 @@ def main() -> None:
             return result.stdout
 
         valid = run(package, accepted=True)
-        assert "manifest=545 wasm_offset=3072 wasm_size=8 max_read=512" in valid
+        assert f"manifest={len(manifest)} wasm_offset=3072 wasm_size={len(wasm)} max_read=512" in valid
         assert hashlib.sha256(package).hexdigest() in valid
         assert hashlib.sha256(wasm).hexdigest() in valid
         assert "result=2" in run(package, key_path=wrong_public)
@@ -118,7 +119,9 @@ def main() -> None:
 
         signed_invalid(manifest + b" ")
         signed_invalid(manifest[:-1] + b',"product_id":"counter"}')
-        signed_invalid(manifest.replace(b'"size_bytes":8', b'"size_bytes":08'))
+        size = str(len(wasm)).encode("ascii")
+        signed_invalid(manifest.replace(b'"size_bytes":' + size,
+                                        b'"size_bytes":0' + size))
         signed_invalid(manifest.replace(b'"package_format_version":1',
                                         b'"package_format_version":2'))
         signed_invalid(manifest.replace(b'"app.wasm"', b'"../app.wasm"'))
@@ -137,7 +140,7 @@ def main() -> None:
             run(bytes(changed))
 
         # A large, valid custom section proves payload hashing uses 512-byte reads.
-        long_wasm = wasm + b"\0\x80\x80\x04" + b"x" * 65536
+        long_wasm = wasm + section(0, name("name") + bytes(65536))
         long_manifest = pkg.create_manifest(spec, long_wasm)
         long_signature = pkg.sign_manifest(long_manifest, private, "test-key")
         long_package = pkg.pack(long_manifest, long_signature, long_wasm,

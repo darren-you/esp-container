@@ -15,9 +15,10 @@ from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import product_package as pkg  # noqa: E402
+from wasm_fixture import module, name, section  # noqa: E402
 
 
-WASM = b"\x00asm\x01\x00\x00\x00"
+WASM = module()
 SPEC = {
     "product_id": "counter",
     "product_version": "v0-1-0",
@@ -89,12 +90,12 @@ class ProductPackageTest(unittest.TestCase):
         manifest = pkg.create_manifest(SPEC, WASM)
         signature = bytes(range(256)) + bytes(range(128))
         package = pkg.pack(manifest, signature, WASM, max_wasm_bytes=1024)
-        self.assertEqual(len(manifest), 545)
+        self.assertEqual(len(manifest), 547)
         self.assertEqual(hashlib.sha256(manifest).hexdigest(),
-                         "0e6cba55543b3bd443881f08dc8a0c2d431d0376fe04c3ab901bb858cc0da6e4")
+                         "5129170a730993186446ddbf2e61d1ee4bb75aeaeeab61e5a81c9a6a9f7cdd7b")
         self.assertEqual(len(package), 10240)
         self.assertEqual(hashlib.sha256(package).hexdigest(),
-                         "f72ef6b500a1dee059625df8772b2e5ad5c9d7a4fd5adf04e4fb1ce0271e6c67")
+                         "3030f9ff99f35f6ad0f3d4b00f9baf03a51bf3f17122c46e1ce26271362fd1e2")
         self.assertEqual(pkg.unpack(package, max_wasm_bytes=1024),
                          (manifest, signature, WASM))
 
@@ -150,9 +151,10 @@ class ProductPackageTest(unittest.TestCase):
         value["unknown"] = True
         with self.assertRaisesRegex(pkg.PackageError, "未知"):
             pkg._manifest(pkg._json_bytes(value))
+        size = str(len(WASM)).encode("ascii")
         with self.assertRaisesRegex(pkg.PackageError, "重复"):
-            pkg._manifest(manifest.replace(b'"size_bytes":8',
-                                           b'"size_bytes":8,"size_bytes":8'))
+            pkg._manifest(manifest.replace(b'"size_bytes":' + size,
+                                           b'"size_bytes":' + size + b',"size_bytes":' + size))
 
     def test_manifest_schema_bounds_rejected(self) -> None:
         manifest, _, _ = self._package()
@@ -184,18 +186,11 @@ class ProductPackageTest(unittest.TestCase):
             pkg.create_manifest(SPEC, WASM + b"\x08\x01\x00")
         with self.assertRaisesRegex(pkg.PackageError, "截断"):
             pkg.create_manifest(SPEC, WASM + b"\x01\x05\x00")
-        with self.assertRaisesRegex(pkg.PackageError, "imports"):
-            pkg.create_manifest(SPEC, WASM + b"\x02\x01\x01")
-        forbidden = b"__post_instantiate"
-        export = b"\x01" + bytes((len(forbidden),)) + forbidden + b"\x00\x00"
-        with self.assertRaisesRegex(pkg.PackageError, "自动构造"):
-            pkg.create_manifest(SPEC, WASM + b"\x07" + bytes((len(export),)) + export)
+        with self.assertRaisesRegex(pkg.PackageError, "ABI"):
+            pkg.create_manifest(SPEC, module(duplicate_export=True))
 
     def test_exact_host_imports_require_manifest_capabilities(self) -> None:
-        types = b"\x02\x60\x00\x01\x7e\x60\x02\x7f\x7f\x01\x7f"
-        imports = (b"\x02\x0a" + b"econtainer" + b"\x0cmonotonic_ms\x00\x00"
-                   + b"\x0aecontainer\x03log\x00\x01")
-        wasm = WASM + b"\x01" + bytes((len(types),)) + types + b"\x02" + bytes((len(imports),)) + imports
+        wasm = module(("monotonic_ms", "log"))
         self.assertEqual(pkg._wasm(wasm), frozenset({"log", "monotonic-time"}))
         with self.assertRaisesRegex(pkg.PackageError, "授权"):
             pkg.create_manifest(SPEC, wasm)
@@ -273,6 +268,9 @@ class ProductPackageTest(unittest.TestCase):
         _, _, package = self._package()
         with self.assertRaises(pkg.PackageError):
             pkg.unpack(package, max_wasm_bytes=7)
+        oversized = WASM + section(0, name("name") + bytes(pkg.DEVICE_MAX_WASM_BYTES))
+        with self.assertRaisesRegex(pkg.PackageError, "设备扫描上限"):
+            pkg.create_manifest(SPEC, oversized)
 
 
 if __name__ == "__main__":
