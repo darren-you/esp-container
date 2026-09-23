@@ -1,4 +1,5 @@
 #include <stdbool.h>
+#include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -6,8 +7,6 @@
 #include "esp_container.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
 #include "bh_platform.h"
 #include "wasm_export.h"
 
@@ -85,7 +84,7 @@ static bool exercise(uint8_t *bytes, uint32_t size, const char *export_name, boo
     return passed;
 }
 
-static void probe_task(void *unused)
+static void *probe_thread(void *unused)
 {
     (void)unused;
     RuntimeInitArgs args;
@@ -97,20 +96,39 @@ static void probe_task(void *unused)
     report_heap("before");
     if (!wasm_runtime_full_init(&args)) {
         ESP_LOGE(TAG, "WAMR initialization failed");
-        vTaskDelete(NULL);
-        return;
+        return NULL;
     }
     const bool normal = exercise(return_zero, sizeof(return_zero), "run", true);
     const bool bounded = exercise(endless_loop, sizeof(endless_loop), "looping", false);
     wasm_runtime_destroy();
     report_heap("after");
     ESP_LOGI(TAG, "normal=%d instruction_limit=%d", (int)normal, (int)bounded);
-    vTaskDelete(NULL);
+    return NULL;
 }
 
 void app_main(void)
 {
-    if (xTaskCreate(probe_task, "container-probe", 8192, NULL, 5, NULL) != pdPASS) {
-        ESP_LOGE(TAG, "probe task allocation failed");
+    pthread_attr_t attributes;
+    if (pthread_attr_init(&attributes) != 0) {
+        ESP_LOGE(TAG, "probe thread attributes initialization failed");
+        return;
+    }
+    if (pthread_attr_setdetachstate(&attributes, PTHREAD_CREATE_JOINABLE) != 0 ||
+        pthread_attr_setstacksize(&attributes, 8192) != 0) {
+        ESP_LOGE(TAG, "probe thread configuration failed");
+        pthread_attr_destroy(&attributes);
+        return;
+    }
+
+    pthread_t thread;
+    const int create_result = pthread_create(&thread, &attributes, probe_thread, NULL);
+    pthread_attr_destroy(&attributes);
+    if (create_result != 0) {
+        ESP_LOGE(TAG, "probe thread creation failed: %d", create_result);
+        return;
+    }
+    const int join_result = pthread_join(thread, NULL);
+    if (join_result != 0) {
+        ESP_LOGE(TAG, "probe thread join failed: %d", join_result);
     }
 }

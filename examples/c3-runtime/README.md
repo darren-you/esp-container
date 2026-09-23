@@ -12,6 +12,18 @@ idf.py -C examples/c3-runtime build
 
 编译不写板。该仓当前没有实板写入授权；如后续获得精确设备和恢复基线授权，再按嵌入式标准进行单板实验。第 9/12/13 节定义的双固件、三包槽、内存峰值和真实异常验收均未由本例替代。
 
+## QEMU 仿真验证
+
+固定 SDK 的官方可选 `qemu-riscv32` 支持 ESP32-C3。安装后重新导出 SDK 环境，再运行样例：
+
+```bash
+python3 "$IDF_PATH/tools/idf_tools.py" install qemu-riscv32
+source "$IDF_PATH/export.sh"
+idf.py -C examples/c3-runtime qemu
+```
+
+探针使用 IDF pthread 入口运行 WAMR；其 ESP-IDF 移植层会调用 `pthread_self()`，普通 `xTaskCreate()` 任务不具备该线程身份。串口应先打印 `before` 的空闲堆与最大连续块，再显示 `run call_ok=1 result=0 exception=none`、`looping call_ok=0 ... Exception: instruction limit exceeded`、`after` 资源值，以及 `normal=1 instruction_limit=1`。样例返回后 QEMU 继续空闲运行，可用 `Ctrl-A x` 退出。仿真只验证该最小代码路径，不代表实板资源峰值、完整产品装配或 Flash 包槽验收。
+
 ## 架构拓扑
 
 ```mermaid
