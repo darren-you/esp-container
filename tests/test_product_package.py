@@ -21,7 +21,7 @@ SPEC = {
     "required_capabilities": [],
     "runtime_profile": "wamr-classic-v1",
     "limits": {
-        "memory_limit_bytes": 65536,
+        "memory_limit_bytes": 131072,
         "stack_limit_bytes": 4096,
         "event_queue_limit": 8,
         "instruction_budget": 100000,

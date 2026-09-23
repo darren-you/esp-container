@@ -1,12 +1,14 @@
 # ESP Container
 
-`esp-container` 是面向 ESP-IDF 的业务包运行组件。当前提供独立 `esp_container` IDF 组件、受限 Wasm 扫描器、公开 guest SDK 草案、确定性 ustar 打包与 RSA-3072/PSS 验包工具，以及 C3 WAMR Classic 指令预算原型。包安装、Flash 三槽、实例资源管理、Base 联合升级与实板容量尚未完成，当前代码只可作为研发检查点。
+`esp-container` 是面向 ESP-IDF 的业务包运行组件。当前提供独立 `esp_container` IDF 组件、受限 Wasm 扫描器、counter guest 的固定 freestanding 构建与静态检查、公开 guest SDK 草案、确定性 ustar 打包与 RSA-3072/PSS 验包工具，以及 C3 WAMR Classic 指令预算原型。包安装、Flash 三槽、实例资源管理、Base 联合升级与实板容量尚未完成，当前代码只可作为研发检查点。
 
 ## 架构拓扑
 
 ```mermaid
 flowchart LR
-    product["产品源码 / guest-sdk"] --> wasm["标准 app.wasm"]
+    product["counter 源码 / guest-sdk"] --> guest["counter_guest.py：受限编译 / ABI 检查"]
+    wasi["固定 wasi-sdk 33"] --> guest
+    guest --> wasm["标准 app.wasm"]
     wasm --> tool["tools/product_package.py：清单 / 签名 / ustar 验证"]
     tool --> pkg["product.pkg：manifest / signature / app.wasm"]
     pkg --> scanner["esp_container：Wasm 入口与 section 检查"]
@@ -39,13 +41,13 @@ cmake --build build-wamr
 ctest --test-dir build-wamr --output-on-failure
 ```
 
-该测试要求正常函数返回 0，死循环必须以精确的指令额度异常终止；它不能代替 C3 实际运行。
+该测试要求正常函数返回 0，死循环必须以精确的指令额度异常终止；它不能代替 C3 实际运行。[counter guest 样例](examples/counter/README.md)记录了固定 wasi-sdk 编译与静态 ABI/profile 检查入口，并可把生成的 `app.wasm` 交给同一主机测试程序执行。
 
 host 工具的包格式和使用步骤见 [包工具](tools/README.md)。[C3 原型](examples/c3-runtime/README.md)需要固定 SDK；原样 WAMR 2.4.4 与固定 IDF 6.1 的编译问题已在公开 fork 的源码中直接修复，具体构建结果见[开发检查点](docs/operations/development-checkpoint.md)。本地构建不会写板。当前代码没有可发布的产品包运行/安装链路，不要把主机验包成功当作设备安全启动。
 
 ## 项目边界
 
-- 本仓拥有 WAMR 集成、guest ABI、包验证、实例生命周期、资源配额和三包槽机制；当前仅完成其中的主机包工具与初始 Wasm 检查。
+- 本仓拥有 WAMR 集成、guest ABI、包验证、实例生命周期、资源配额和三包槽机制；当前已完成主机包工具、初始 Wasm 检查与 counter 样例编译检查。
 - `esp-base` 拥有设备身份、配置、授权与平台装配；`esp-ota` 拥有固件 A/B 升级。业务包不会写入 app OTA 槽。
 - C3 4 MiB 双固件与三包槽的真实容量、RAM 峰值和分区迁移必须先按[跨仓开发计划](https://github.com/darren-you/darren-space/blob/master/harness/docs/design/darren-space/global/esp-base-frp-mqtt-ota-container-development-plan.md)第 9、12、13 节验证。未获得明确设备授权时不刷板、不改分区。
 - 新代码 Apache-2.0；上游依赖保持[精确来源与许可](docs/design/source-provenance.md)。
@@ -53,7 +55,7 @@ host 工具的包格式和使用步骤见 [包工具](tools/README.md)。[C3 原
 ## 入口
 
 - [IDF 组件与公开头](components/esp_container/include/esp_container.h)
-- [guest SDK](guest-sdk/include/econtainer_guest.h)
+- [guest SDK 与 counter 编译样例](examples/counter/README.md)
 - [主机包工具](tools/README.md)
 - [C3 原型](examples/c3-runtime/README.md)
 - [测试](tests/README.md)
