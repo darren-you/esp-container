@@ -54,6 +54,10 @@ int32_t econtainer_stop(void)
         ++spin_count;
     }
 #endif
+#if defined(ECONTAINER_STOP_FAIL)
+    return -1;
+#else
     event_count = 0;
     return 0;
+#endif
 }

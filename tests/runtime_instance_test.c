@@ -6,6 +6,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef ECONTAINER_TEST_RESOURCE_STATS
+#include <malloc/malloc.h>
+#include <mach/mach.h>
+#include <mach/task_info.h>
+#include <sys/mman.h>
+#endif
 
 #define CHECK(condition) do { \
     if (!(condition)) { \
@@ -24,6 +30,66 @@ static const econtainer_runtime_limits_t limits = {
     .event_instruction_budget = 1000,
     .stop_instruction_budget = 1000,
 };
+
+#ifdef ECONTAINER_TEST_RESOURCE_STATS
+typedef struct {
+    size_t malloc_bytes;
+    mach_vm_size_t virtual_bytes;
+    integer_t regions;
+} resource_stats_t;
+
+static bool sample_resources(resource_stats_t *sample)
+{
+    malloc_statistics_t statistics = {0};
+    malloc_zone_statistics(malloc_default_zone(), &statistics);
+    task_vm_info_data_t vm = {0};
+    mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+    if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vm, &count) !=
+        KERN_SUCCESS) return false;
+    sample->malloc_bytes = statistics.size_in_use;
+    sample->virtual_bytes = vm.virtual_size;
+    sample->regions = vm.region_count;
+    return sample->malloc_bytes > 0 && sample->virtual_bytes > 0 && sample->regions > 0;
+}
+
+static bool resource_probes_calibrated(void)
+{
+    resource_stats_t before = {0}, allocated = {0};
+    if (!sample_resources(&before)) return false;
+    void *heap = malloc(65536);
+    if (heap == NULL) return false;
+    memset(heap, 0x5a, 65536);
+    const bool heap_visible = sample_resources(&allocated) &&
+                              allocated.malloc_bytes >= before.malloc_bytes + 65536;
+    free(heap);
+    if (!heap_visible || !sample_resources(&before)) return false;
+    void *mapping = mmap(NULL, 65536, PROT_READ | PROT_WRITE,
+                         MAP_ANON | MAP_PRIVATE, -1, 0);
+    if (mapping == MAP_FAILED) return false;
+    const bool mapping_visible = sample_resources(&allocated) &&
+                                 allocated.virtual_bytes >= before.virtual_bytes + 65536;
+    return munmap(mapping, 65536) == 0 && mapping_visible;
+}
+
+static bool resources_stable(const char *label, resource_stats_t after_ten,
+                             resource_stats_t after_fifty, resource_stats_t after_hundred)
+{
+    fprintf(stderr, "%s resources 10/50/100: malloc=%zu/%zu/%zu "
+            "virtual=%llu/%llu/%llu regions=%d/%d/%d\n", label,
+            after_ten.malloc_bytes, after_fifty.malloc_bytes,
+            after_hundred.malloc_bytes,
+            (unsigned long long)after_ten.virtual_bytes,
+            (unsigned long long)after_fifty.virtual_bytes,
+            (unsigned long long)after_hundred.virtual_bytes,
+            after_ten.regions, after_fifty.regions, after_hundred.regions);
+    /* Existing mappings may split; retained heap/address space must not grow. */
+    return after_ten.malloc_bytes == after_fifty.malloc_bytes &&
+           after_fifty.malloc_bytes == after_hundred.malloc_bytes &&
+           after_ten.virtual_bytes == after_fifty.virtual_bytes &&
+           after_fifty.virtual_bytes == after_hundred.virtual_bytes &&
+           after_hundred.regions <= after_fifty.regions;
+}
+#endif
 
 static uint8_t *read_file(const char *path, size_t *size_bytes)
 {
@@ -197,14 +263,144 @@ static bool test_repeated_release(const char *counter_path)
     size_t length = 0;
     uint8_t *bytes = read_file(counter_path, &length);
     CHECK(bytes != NULL);
-    for (unsigned index = 0; index < 8; ++index) {
+#ifdef ECONTAINER_TEST_RESOURCE_STATS
+    resource_stats_t after_ten = {0}, after_fifty = {0}, after_hundred = {0};
+#endif
+    for (unsigned index = 0; index < 100; ++index) {
         econtainer_runtime_t *runtime = NULL;
         CHECK(econtainer_runtime_open(bytes, length, &limits, &runtime) == ECONTAINER_RUNTIME_OK);
         CHECK(econtainer_runtime_init(runtime) == ECONTAINER_RUNTIME_OK);
+        const uint8_t event[] = {1, 2, 3};
+        int32_t result = -1;
+        CHECK(econtainer_runtime_on_event(runtime, event, sizeof event, &result) ==
+              ECONTAINER_RUNTIME_OK);
+        CHECK(result == 3);
         CHECK(econtainer_runtime_stop(runtime) == ECONTAINER_RUNTIME_OK);
-        econtainer_runtime_close(&runtime);
+        CHECK(econtainer_runtime_close(&runtime) == ECONTAINER_RUNTIME_OK);
         CHECK(runtime == NULL);
+#ifdef ECONTAINER_TEST_RESOURCE_STATS
+        if (index == 9U) CHECK(sample_resources(&after_ten));
+        if (index == 49U) CHECK(sample_resources(&after_fifty));
+        if (index == 99U) CHECK(sample_resources(&after_hundred));
+#endif
     }
+#ifdef ECONTAINER_TEST_RESOURCE_STATS
+    CHECK(resources_stable("counter", after_ten, after_fifty, after_hundred));
+#endif
+    free(bytes);
+    return true;
+}
+
+static bool test_failure_reopen(const char *counter_path, const char *init_loop_path,
+                                const char *event_loop_path, const char *stop_loop_path,
+                                const char *stop_fail_path)
+{
+    const char *paths[] = {init_loop_path, event_loop_path, stop_loop_path, stop_fail_path};
+    uint8_t *fault_bytes[4] = {0};
+    size_t fault_sizes[4] = {0};
+    for (unsigned index = 0; index < 4; ++index) {
+        fault_bytes[index] = read_file(paths[index], &fault_sizes[index]);
+        CHECK(fault_bytes[index] != NULL);
+    }
+    size_t counter_size = 0;
+    uint8_t *counter = read_file(counter_path, &counter_size);
+    CHECK(counter != NULL);
+#ifdef ECONTAINER_TEST_RESOURCE_STATS
+    resource_stats_t after_ten = {0}, after_fifty = {0}, after_hundred = {0};
+#endif
+    for (unsigned index = 0; index < 100; ++index) {
+        const unsigned fault = index % 4U;
+        econtainer_runtime_t *runtime = NULL;
+        CHECK(econtainer_runtime_open(fault_bytes[fault], fault_sizes[fault], &limits,
+                                      &runtime) == ECONTAINER_RUNTIME_OK);
+        if (fault == 0U) {
+            CHECK(econtainer_runtime_init(runtime) == ECONTAINER_RUNTIME_INSTRUCTION_LIMIT);
+        }
+        else {
+            CHECK(econtainer_runtime_init(runtime) == ECONTAINER_RUNTIME_OK);
+            const uint8_t event[] = {1};
+            int32_t result = -1;
+            if (fault == 1U) {
+                CHECK(econtainer_runtime_on_event(runtime, event, sizeof event, &result) ==
+                      ECONTAINER_RUNTIME_INSTRUCTION_LIMIT);
+            }
+            else {
+                CHECK(econtainer_runtime_on_event(runtime, event, sizeof event, &result) ==
+                      ECONTAINER_RUNTIME_OK);
+                CHECK(econtainer_runtime_stop(runtime) ==
+                      (fault == 2U ? ECONTAINER_RUNTIME_INSTRUCTION_LIMIT :
+                                     ECONTAINER_RUNTIME_GUEST_FAILURE));
+            }
+        }
+        CHECK(econtainer_runtime_state(runtime) == ECONTAINER_RUNTIME_FAILED);
+        CHECK(econtainer_runtime_close(&runtime) == ECONTAINER_RUNTIME_OK);
+        CHECK(runtime == NULL);
+        CHECK(econtainer_runtime_open(counter, counter_size, &limits, &runtime) ==
+              ECONTAINER_RUNTIME_OK);
+        CHECK(econtainer_runtime_init(runtime) == ECONTAINER_RUNTIME_OK);
+        const uint8_t event[] = {1, 2, 3};
+        int32_t result = -1;
+        CHECK(econtainer_runtime_on_event(runtime, event, sizeof event, &result) ==
+              ECONTAINER_RUNTIME_OK);
+        CHECK(result == 3);
+        CHECK(econtainer_runtime_stop(runtime) == ECONTAINER_RUNTIME_OK);
+        CHECK(econtainer_runtime_close(&runtime) == ECONTAINER_RUNTIME_OK);
+        CHECK(runtime == NULL);
+#ifdef ECONTAINER_TEST_RESOURCE_STATS
+        if (index == 9U) CHECK(sample_resources(&after_ten));
+        if (index == 49U) CHECK(sample_resources(&after_fifty));
+        if (index == 99U) CHECK(sample_resources(&after_hundred));
+#endif
+    }
+#ifdef ECONTAINER_TEST_RESOURCE_STATS
+    CHECK(resources_stable("failure/reopen", after_ten, after_fifty, after_hundred));
+#endif
+    free(counter);
+    for (unsigned index = 0; index < 4; ++index) free(fault_bytes[index]);
+    return true;
+}
+
+static bool test_repeated_native_release(const char *path)
+{
+    size_t length = 0;
+    uint8_t *bytes = read_file(path, &length);
+    CHECK(bytes != NULL);
+    econtainer_runtime_limits_t authorized = limits;
+    authorized.allowed_capabilities = ECONTAINER_CAP_MONOTONIC_TIME | ECONTAINER_CAP_LOG;
+    authorized.max_log_bytes = 16;
+#ifdef ECONTAINER_TEST_RESOURCE_STATS
+    resource_stats_t after_ten = {0}, after_fifty = {0}, after_hundred = {0};
+#endif
+    for (unsigned index = 0; index < 100; ++index) {
+        econtainer_runtime_t *runtime = NULL;
+        CHECK(econtainer_runtime_open(bytes, length, &authorized, &runtime) ==
+              ECONTAINER_RUNTIME_OK);
+        CHECK(econtainer_runtime_init(runtime) == ECONTAINER_RUNTIME_OK);
+        uint8_t log[16] = {0};
+        size_t log_size = 0;
+        CHECK(econtainer_runtime_take_log(runtime, log, sizeof log, &log_size) ==
+              ECONTAINER_RUNTIME_OK);
+        CHECK(log_size == 4 && memcmp(log, "init", 4) == 0);
+        const uint8_t event[] = {1, 'a', 'b', 'c'};
+        int32_t result = -1;
+        CHECK(econtainer_runtime_on_event(runtime, event, sizeof event, &result) ==
+              ECONTAINER_RUNTIME_OK);
+        CHECK(result == 0);
+        CHECK(econtainer_runtime_take_log(runtime, log, sizeof log, &log_size) ==
+              ECONTAINER_RUNTIME_OK);
+        CHECK(log_size == 3 && memcmp(log, "abc", 3) == 0);
+        CHECK(econtainer_runtime_stop(runtime) == ECONTAINER_RUNTIME_OK);
+        CHECK(econtainer_runtime_close(&runtime) == ECONTAINER_RUNTIME_OK);
+        CHECK(runtime == NULL);
+#ifdef ECONTAINER_TEST_RESOURCE_STATS
+        if (index == 9U) CHECK(sample_resources(&after_ten));
+        if (index == 49U) CHECK(sample_resources(&after_fifty));
+        if (index == 99U) CHECK(sample_resources(&after_hundred));
+#endif
+    }
+#ifdef ECONTAINER_TEST_RESOURCE_STATS
+    CHECK(resources_stable("native", after_ten, after_fifty, after_hundred));
+#endif
     free(bytes);
     return true;
 }
@@ -324,19 +520,28 @@ static bool test_host_api(const char *host_api_path)
 
 int main(int argc, char **argv)
 {
-    if (argc != 8) {
-        fprintf(stderr, "usage: %s counter event-read init-loop event-loop stop-loop wrong-signature host-api\n",
+    if (argc != 9) {
+        fprintf(stderr, "usage: %s counter event-read init-loop event-loop stop-loop stop-fail wrong-signature host-api\n",
                 argv[0]);
         return 2;
     }
+#ifdef ECONTAINER_TEST_RESOURCE_STATS
+    if (!resource_probes_calibrated()) {
+        fprintf(stderr, "resource probe calibration failed\n");
+        return 1;
+    }
+#endif
     const bool passed = test_counter(argv[1]) && test_event_copy(argv[2]) &&
                         test_event_allocation_failure(argv[2]) &&
                         test_loop(argv[3], 0) && test_loop(argv[4], 1) &&
                         test_loop(argv[5], 2) &&
-                        test_wrong_abi_and_release(argv[6], argv[1]) &&
-                        test_repeated_release(argv[1]) && test_host_api(argv[7]);
+                        test_wrong_abi_and_release(argv[7], argv[1]) &&
+                        test_repeated_release(argv[1]) &&
+                        test_failure_reopen(argv[1], argv[3], argv[4], argv[5], argv[6]) &&
+                        test_repeated_native_release(argv[8]) &&
+                        test_host_api(argv[8]);
     if (passed) {
-        fprintf(stderr, "runtime instance: counter/event copy/three budgets/ABI/release passed\n");
+        fprintf(stderr, "runtime instance: 100 counter, 100 native and 100 failure/reopen cycles passed\n");
     }
     return passed ? 0 : 1;
 }

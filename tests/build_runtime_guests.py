@@ -19,6 +19,7 @@ VARIANTS = {
     "init-loop": "ECONTAINER_INIT_LOOP",
     "event-loop": "ECONTAINER_EVENT_LOOP",
     "stop-loop": "ECONTAINER_STOP_LOOP",
+    "stop-fail": "ECONTAINER_STOP_FAIL",
     "wrong-signature": "ECONTAINER_WRONG_SIGNATURE",
 }
 

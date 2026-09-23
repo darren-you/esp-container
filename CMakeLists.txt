@@ -84,6 +84,7 @@ if(BUILD_TESTING)
                 "${runtime_guests_dir}/init-loop.wasm"
                 "${runtime_guests_dir}/event-loop.wasm"
                 "${runtime_guests_dir}/stop-loop.wasm"
+                "${runtime_guests_dir}/stop-fail.wasm"
                 "${runtime_guests_dir}/wrong-signature.wasm")
             list(APPEND runtime_guests "${runtime_guests_dir}/host-api.wasm")
             add_custom_command(OUTPUT ${runtime_guests}
@@ -99,6 +100,10 @@ if(BUILD_TESTING)
             target_include_directories(runtime_instance_test PRIVATE components/esp_container/src)
             target_link_libraries(runtime_instance_test PRIVATE esp_container)
             target_compile_options(runtime_instance_test PRIVATE -Wall -Wextra -Werror -UNDEBUG)
+            if(APPLE AND NOT CMAKE_C_FLAGS MATCHES "-fsanitize")
+                target_compile_definitions(runtime_instance_test PRIVATE
+                    ECONTAINER_TEST_RESOURCE_STATS=1)
+            endif()
             add_dependencies(runtime_instance_test runtime_guest_fixtures)
             add_test(NAME runtime_instance COMMAND runtime_instance_test ${runtime_guests})
             set_tests_properties(runtime_instance PROPERTIES TIMEOUT 15)
