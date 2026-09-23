@@ -22,7 +22,7 @@ source "$IDF_PATH/export.sh"
 idf.py -C examples/c3-runtime qemu
 ```
 
-探针使用 IDF pthread 入口运行 WAMR；其 ESP-IDF 移植层会调用 `pthread_self()`，普通 `xTaskCreate()` 任务不具备该线程身份。串口应先打印 `before` 的空闲堆与最大连续块，再显示 `run call_ok=1 result=0 exception=none`、`looping call_ok=0 ... Exception: instruction limit exceeded`、`after` 资源值，以及 `normal=1 instruction_limit=1`。样例返回后 QEMU 继续空闲运行，可用 `Ctrl-A x` 退出。仿真只验证该最小代码路径，不代表实板资源峰值、完整产品装配或 Flash 包槽验收。
+探针使用 IDF pthread 入口运行 WAMR；其 ESP-IDF 移植层会调用 `pthread_self()`，普通 `xTaskCreate()` 任务不具备该线程身份。串口应先打印 `before` 的空闲堆与最大连续块，再显示 `run call_ok=1 result=0 exception=none`、`looping call_ok=0 ... Exception: instruction limit exceeded`、`after` 资源值，以及 `normal=1 instruction_limit=1`。样例返回后 QEMU 继续空闲运行，可用 `Ctrl-A x` 退出。[128 KiB counter guest 仿真记录](../../docs/operations/qemu-counter-capacity-probe.md)另列加载、实例化、调用与卸载的堆采样；该实验的 C 代码仅在仓外临时副本，不属于本样例正式入口。仿真只验证最小代码路径，不代表实板资源峰值、完整产品装配或 Flash 包槽验收。
 
 ## 架构拓扑
 

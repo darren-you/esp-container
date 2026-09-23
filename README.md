@@ -45,7 +45,7 @@ ctest --test-dir build-wamr --output-on-failure
 
 设置官方 wasi-sdk 33 的 `WASI_SDK_ROOT` 时，第三项 `runtime_instance` 测试会编译真正的 counter 和故障 guest，在锁定 WAMR 上检查单实例、事件复制、ABI、三个入口的额度和失败释放。没有该工具链时仍可运行原有两项 CTest；详见[运行切片检查点](docs/operations/single-instance-runtime-checkpoint.md)。这些主机测试不能代替设备上的完整运行。[counter guest 样例](examples/counter/README.md)记录固定编译与静态 ABI/profile 检查入口。
 
-host 工具的包格式和使用步骤见 [包工具](tools/README.md)。[C3 原型](examples/c3-runtime/README.md)需要固定 SDK；原样 WAMR 2.4.4 与固定 IDF 6.1 的编译问题已在公开 fork 的源码中直接修复，具体构建结果见[开发检查点](docs/operations/development-checkpoint.md)。[五组件仓外容量原型](docs/operations/five-component-capacity-probe.md)记录签名镜像、分区几何和未闭合的动态资源边界。本地构建不会写板。当前代码没有可发布的产品包运行/安装链路，不要把主机验包成功当作设备安全启动。
+host 工具的包格式和使用步骤见 [包工具](tools/README.md)。[C3 原型](examples/c3-runtime/README.md)需要固定 SDK；原样 WAMR 2.4.4 与固定 IDF 6.1 的编译问题已在公开 fork 的源码中直接修复，具体构建结果见[开发检查点](docs/operations/development-checkpoint.md)。[五组件仓外容量原型](docs/operations/five-component-capacity-probe.md)记录签名镜像与分区几何，[QEMU counter 容量切片](docs/operations/qemu-counter-capacity-probe.md)记录独立 C3 样例的动态堆采样；两者均未闭合产品容量验收。本地构建不会写板。当前代码没有可发布的产品包运行/安装链路，不要把主机验包成功当作设备安全启动。
 
 ## 项目边界
 
