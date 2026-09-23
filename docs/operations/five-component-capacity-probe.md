@@ -1,5 +1,13 @@
 # 五组件 C3/4 MiB 仓外容量原型：2026-09-23
 
+## 2026-09-24 Base v3 与真实 provider 静态复测
+
+仓外复制公开 `esp-base@56bf1356e0d4b2924ff61a6f333b80e1b34aac00`，保留其精确依赖 `esp-frp@9158b7f2e2c555a14636aed26b5189902152d19e`、`esp-mqtt@9cac455b0184420353ff0283df3f100abaac3e6b`、`esp-ota@bed5709fe517f62d60f2efad95491bc66756a42c`，加入公开 `esp-container@7f12e19022b9fd7632678d6865c5d1a5255799e6` 和其中精确锁定的 WAMR fork `a34d721b630213f59fde0b40cebbb980903660e8`。固定 SDK 仍为 `esp-idf@855937cf9dcee13ee9c423fb0319238cdc8d53fd` / `esp-lwip@2758df4cd3666b3b2a5b53830148379326425c0d`。Component Manager 重新解析的锁文件分别显示 FRP、MQTT、OTA 和 WAMR 的上述完整提交；Container 作为仓外本地组件加入，仅用于容量探针，不构成 Base 的正式依赖。
+
+沿用下文的不可执行 `volatile` 链接门，保留真实 Base FRP owner、MQTT、OTA、Container 验包/Wasm 授权/三槽、ESP-IDF Flash/NVS provider 及 WAMR Classic 符号。临时 RSA-3072 测试键签名 C3 镜像为 `0x121000`（1,183,744 字节），SHA-256 `03f61c8b693ddfe2ee805a024be7c28095e2a8ceb4f5ead74a3e6b6524fa0ed5`；ELF 符号表确认 `efrp_create`、`emqtt_create`、`eota_prepare`、`econtainer_package_verify`、`econtainer_package_wasm_check`、`econtainer_slots_reconcile`、`econtainer_slots_idf_bind` 和 `wasm_runtime_call_wasm` 均被保留，`espsecure verify-signature --version 2` 用该测试键导出的公钥验签通过。
+
+此结果只证明当前五组件软件能链接为同一签名镜像，且镜像大小尚未改变下文 4 MiB 几何结论。provider 只有编译与链接，没有真实专用 data 分区；现有 Base 分区表无三包槽，探针也不运行 FRP/MQTT/OTA 会话或 guest。临时镜像不能刷板，P6-03、P6-08 和 P7-01 均未验收。
+
 ## 2026-09-24 当前源码静态复测
 
 沿用仓外组合工程和临时 RSA-3072 测试键，更新到公开 `esp-base@ecf1539ee90b5c256df0bae6004d27b0b2683de5`、`esp-frp@9158b7f2e2c555a14636aed26b5189902152d19e`、`esp-mqtt@d099d0ad8d41cb2e5f7d0849baaae98bb7a3d748`、`esp-ota@bae8d13ca5f99c730c667bc55d6ea6a0d883e608`，以及本仓合并的流式验包、Wasm 静态授权和三包槽源码 `0df04118023e6be1c3bcb75f82fff061cb3c45f3`。SDK 为公开 `esp-idf@855937cf9dcee13ee9c423fb0319238cdc8d53fd`，其 lwIP 检出为 `2758df4cd3666b3b2a5b53830148379326425c0d`，WAMR 仍固定 `a34d721b630213f59fde0b40cebbb980903660e8`。
