@@ -2,3 +2,4 @@
 - 记录五组件 QEMU 128 KiB 失败与 64 KiB 容量切片
 - 新增 product.pkg 只读流式验包切片与主机故障测试
 - 新增 product.pkg 设备端只读 Wasm ABI 与独立授权静态检查
+- 新增按精确专用分区与 NVS 合同绑定的三槽 ESP-IDF provider，并补齐宿主及 C3 构建验证

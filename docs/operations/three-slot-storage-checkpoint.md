@@ -31,4 +31,12 @@
 
 主机 `slots` CTest 使用假 Flash/NVS 覆盖 P0→P3 引用变化、先提交保留再擦除、两种 commit 返回错误的保守裁决、blob 读回失败/CRC 损坏、部分写入、候选回读摘要损坏/断读、旧确认包可恢复但不可推进候选、同 boot 无停止证明拒绝取消/停止证明后取消、错序号/错固件与几何拒绝。原包解析和 Wasm 扫描 CTest 保持独立运行。
 
-仍缺真实 `esp_partition`/NVS provider、完整 `econtainer_package_verify` 与静态扫描/授权回调装配、同 Flash 写入者独占、实际两份固件身份/状态对账、联合 OTA 阶段、产品操作账本、真实断电与 C3 实板的容量/时延/磨损验证。P6-08、P6-10、P7-01 因此保持未验收。
+仍缺已冻结的真实包分区与 Base provider 装配、完整 `econtainer_package_verify` 与静态扫描/授权回调装配、同 Flash 写入者独占、实际两份固件身份/状态对账、联合 OTA 阶段、产品操作账本、真实断电与 C3 实板的容量/时延/磨损验证。P6-08、P6-10、P7-01 因此保持未验收。
+
+## ESP-IDF provider 接线（2026-09-24）
+
+`esp_container_slots_idf.h` 现提供对现有三槽回调的 ESP-IDF 实现。绑定必须由调用方给出已经冻结的**独立**包 data 分区标签、精确地址/大小、三个槽的绝对边界、NVS 分区标签和精确地址/大小、namespace/key，以及与同一设备全部包槽写入者共享的锁。provider 从当前 IDF 分区表发现并读回这些事实；包区只接受可写的 `data/undefined` 分区，NVS 只接受可写的 `data/nvs` 分区，两者不得重叠。错类型、缺失、地址/大小不符、槽未对齐/越界或重叠均在创建回调前拒绝。擦除粒度取实际分区的 `erase_size`；普通写入按 4 字节、加密分区按 IDF 要求的 16 字节对齐，所有 Flash 回调再次检查绝对边界再转为分区相对地址。
+
+锁由调用方创建并覆盖所有包槽操作及运行切换；provider 只做非阻塞获取，不另建私有锁。NVS 必须由产品先初始化，provider 不自动 erase、重建或迁移 NVS；`write_blob` 对一个 key 执行 `set_blob → commit`，`read_blob` 关闭写 handle 后另开只读 handle，精确读取 288 字节并区分 key 缺失、长度错误与 I/O 错误。commit 返回失败即使底层实际写入也仍由三槽引擎按不确定结果裁决。provider 不保存另一份状态，也不负责签名、授权、业务账本或固件身份。
+
+当前 Base 的 4 MiB 分区表没有独立包 data 分区，只有双 app、NVS/otadata/phy/coredump 与末尾 `base_store` NVS；把 `base_store` 当包区会被类型检查拒绝。Container C3 样例只编译本 provider，没有调用它。host 的合成分区/NVS 假件证明缺失/错类型/只读/越界拒绝、绝对到相对 Flash 地址转换、NVS commit/独立读回和三槽初始化/加载；它不是实际 4 MiB 布局证据。P6-03 尚须冻结真实容量与目标分区，P7-01 才能经授权迁移并由 Base 装配共享锁、真实签名/授权和运行绑定。在此之前没有启用安装或运行，P6-08 继续未验收。

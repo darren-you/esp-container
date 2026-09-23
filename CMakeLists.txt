@@ -36,6 +36,13 @@ if(BUILD_TESTING)
     target_link_libraries(slots_test PRIVATE esp_container)
     target_compile_options(slots_test PRIVATE -Wall -Wextra -Werror -Wconversion -UNDEBUG)
     add_test(NAME slots COMMAND slots_test)
+    add_executable(slots_idf_test
+        components/esp_container/src/slots_idf.c tests/slots_idf_test.c)
+    target_include_directories(slots_idf_test PRIVATE
+        tests/fakes/slots_idf components/esp_container/include)
+    target_link_libraries(slots_idf_test PRIVATE esp_container)
+    target_compile_options(slots_idf_test PRIVATE -Wall -Wextra -Werror -Wconversion -UNDEBUG)
+    add_test(NAME slots_idf COMMAND slots_idf_test)
 
     set(ESP_CONTAINER_WAMR_SOURCE "" CACHE PATH "Path to the WAMR source fetched by the locked C3 example")
     if(ESP_CONTAINER_WAMR_SOURCE)
