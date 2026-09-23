@@ -32,11 +32,16 @@ def main() -> None:
         package = temporary / "product.pkg"
         package.write_bytes(signed_package(private, module(), spec))
         for mode in ("valid", "changed-copy", "product", "schema", "key-id", "memory", "queue",
-                     "budget", "timeout", "read-fault"):
+                     "budget", "timeout", "read-fault", "wasm-read-fault"):
             result = subprocess.run([str(binary), str(package), str(public), mode],
                                     capture_output=True, text=True, check=False)
             assert result.returncode == 0, f"{mode}: {result.stdout} {result.stderr}"
-            expected = "result=0 phase=2" if mode in ("valid", "changed-copy") else "result=8 phase=1"
+            if mode in ("valid", "changed-copy"):
+                expected = "result=0 phase=2"
+            elif mode in ("read-fault", "wasm-read-fault"):
+                expected = "result=3 phase=1"
+            else:
+                expected = "result=8 phase=1"
             assert expected in result.stdout, f"{mode}: {result.stdout}"
     print("package_slot: signed Flash readback, policy, schema and read faults passed")
 

@@ -37,11 +37,9 @@ typedef struct {
  * admits only this immutable slot snapshot; it does not start or activate a
  * guest. Every other package-slot writer must honor the same storage lock.
  */
-bool econtainer_package_slot_validate(void *context,
-                                      const econtainer_slot_operation_t *operation,
-                                      econtainer_slot_read_fn read_fn,
-                                      void *read_context,
-                                      size_t package_size_bytes);
+econtainer_slot_validation_result_t econtainer_package_slot_validate(
+    void *context, const econtainer_slot_operation_t *operation,
+    econtainer_slot_read_fn read_fn, void *read_context, size_t package_size_bytes);
 
 #ifdef __cplusplus
 }

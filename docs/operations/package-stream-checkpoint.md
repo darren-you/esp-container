@@ -4,7 +4,7 @@
 
 验包成功后，`econtainer_package_info_t` 除包摘要与 Wasm 偏移外，还返回已签名的 `guest_abi_version`、`data_schema_version`、Classic profile、全部六项资源请求和能力声明；产品 ID/版本以 `workspace->manifest` 中的有界偏移和长度提供，只有在该 workspace 保持原样时有效。它们**只是包的请求**。`econtainer_package_wasm_check()` 必须使用相同、稳定的包字节和上一步的 info，同时接收平台独立提供的 `econtainer_wasm_authorization_t`；把 info 中的能力或资源请求直接复制成授权会使检查失效。接口每次读取最多 512 字节，不分配整包或整份 Wasm 的 RAM，不写入存储，也不启动 guest。
 
-`econtainer_package_slot_validate()` 是三槽 `write_and_prepare` 的真实候选回读回调。三槽引擎先比对完整包 SHA-256，再在同一共享锁下从候选 Flash 回读，验签并重新扫描 Wasm；回调将已签名产品 ID 与平台授权产品比较，将包摘要、ABI 和数据 schema 与持久候选操作比较，并将队列、指令、宿主期限和存储请求与调用方独立限额比较。内存、栈与能力继续由 Wasm 检查器比较；失败不进入 PREPARED，输出 info 清零。产品版本通过精确包摘要绑定，回调不将该字段解释为安装授权。测试用真实临时 RSA 签名包、假 Flash/NVS 和多项授权负例覆盖此组合。
+`econtainer_package_slot_validate()` 是三槽 `write_and_prepare` 的真实候选回读回调。三槽引擎先比对完整包 SHA-256，再在同一共享锁下从候选 Flash 回读，验签并重新扫描 Wasm；回调将已签名产品 ID 与平台授权产品比较，将包摘要、ABI 和数据 schema 与持久候选操作比较，并将队列、指令、宿主期限和存储请求与调用方独立限额比较。内存、栈与能力继续由 Wasm 检查器比较；失败不进入 PREPARED，输出 info 清零。验签或 Wasm 二次读取失败透传为 `IO_FAILED`，完整读到却被签名、格式或授权拒绝返回 `UNTRUSTED`，避免将 Flash 故障误报为不可信包。产品版本通过精确包摘要绑定，回调不将该字段解释为安装授权。测试用真实临时 RSA 签名包、假 Flash/NVS 和多项授权负例覆盖此组合。
 
 解析器只接受 host `product_package.py` 生成的规范无压缩 ustar：固定三成员与顺序，逐字节固定 header，零填充、两个结束块与精确 10 KiB record 长度。manifest 按规范 JSON 的固定键顺序和类型读取，拒绝重复/未知字段、非规范编码、越界整数、非小写十六进制摘要和不匹配的 key ID。签名覆盖 `ESP-CONTAINER-PRODUCT-V1\0` 与 manifest 精确字节，RSA-PSS 固定 SHA-256、MGF1-SHA-256、32 字节 salt；公钥不从包中读取。Wasm 按块计算 SHA-256，核对清单长度和摘要；整个归档也按流计算 SHA-256，供上层绑定请求。
 

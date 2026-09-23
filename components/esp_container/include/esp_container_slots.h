@@ -120,16 +120,20 @@ typedef bool (*econtainer_slot_read_fn)(void *context, size_t relative_offset_by
                                          uint8_t *destination, size_t size_bytes);
 typedef bool (*econtainer_slot_source_fn)(void *context, size_t relative_offset_bytes,
                                            uint8_t *destination, size_t size_bytes);
+typedef enum {
+    ECONTAINER_SLOT_VALIDATION_OK = 0,
+    ECONTAINER_SLOT_VALIDATION_UNTRUSTED,
+    ECONTAINER_SLOT_VALIDATION_IO_FAILED,
+} econtainer_slot_validation_result_t;
 /*
  * The operation is the exact durable reservation read under the slot lock.
  * Validate against it, not a separately held copy that may have changed.
  * Must verify signature, Wasm/profile, product authorization and grant.
+ * A read failure is distinct from a complete but rejected package.
  */
-typedef bool (*econtainer_slot_validate_fn)(void *context,
-                                             const econtainer_slot_operation_t *operation,
-                                             econtainer_slot_read_fn read_fn,
-                                             void *read_context,
-                                             size_t package_size_bytes);
+typedef econtainer_slot_validation_result_t (*econtainer_slot_validate_fn)(
+    void *context, const econtainer_slot_operation_t *operation,
+    econtainer_slot_read_fn read_fn, void *read_context, size_t package_size_bytes);
 
 /* The unique executor owner checks that this trial has stopped and has no native references. */
 typedef bool (*econtainer_slot_trial_stopped_fn)(

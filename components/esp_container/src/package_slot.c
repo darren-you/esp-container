@@ -30,15 +30,13 @@ static bool product_matches(const econtainer_package_slot_validation_t *validati
                   validation->expected_product_id, expected_size) == 0;
 }
 
-bool econtainer_package_slot_validate(void *context,
-                                      const econtainer_slot_operation_t *operation,
-                                      econtainer_slot_read_fn read_fn,
-                                      void *read_context,
-                                      size_t package_size_bytes)
+econtainer_slot_validation_result_t econtainer_package_slot_validate(
+    void *context, const econtainer_slot_operation_t *operation,
+    econtainer_slot_read_fn read_fn, void *read_context, size_t package_size_bytes)
 {
     econtainer_package_slot_validation_t *validation = context;
     if (validation == NULL || validation->verified_info == NULL) {
-        return false;
+        return ECONTAINER_SLOT_VALIDATION_UNTRUSTED;
     }
     memset(validation->verified_info, 0, sizeof(*validation->verified_info));
     if (validation->package_workspace != NULL) {
@@ -57,7 +55,7 @@ bool econtainer_package_slot_validate(void *context,
         validation->max_instruction_budget > INT32_MAX ||
         validation->max_host_call_timeout_ms == 0U ||
         package_size_bytes != operation->package_size_bytes) {
-        return false;
+        return ECONTAINER_SLOT_VALIDATION_UNTRUSTED;
     }
 
     const econtainer_package_slot_reader_t reader = {
@@ -66,13 +64,14 @@ bool econtainer_package_slot_validate(void *context,
         .package_size_bytes = package_size_bytes,
     };
     econtainer_package_info_t info;
-    if (econtainer_package_verify(read_slot, (void *)&reader,
-                                  package_size_bytes, validation->max_wasm_bytes,
-                                  validation->public_key_rsa_der,
-                                  validation->public_key_size_bytes,
-                                  validation->expected_key_id,
-                                  validation->package_workspace, &info) != ECONTAINER_PACKAGE_OK) {
-        return false;
+    const econtainer_package_result_t package_result = econtainer_package_verify(
+        read_slot, (void *)&reader, package_size_bytes, validation->max_wasm_bytes,
+        validation->public_key_rsa_der, validation->public_key_size_bytes,
+        validation->expected_key_id, validation->package_workspace, &info);
+    if (package_result != ECONTAINER_PACKAGE_OK) {
+        return package_result == ECONTAINER_PACKAGE_READ_FAILED
+                   ? ECONTAINER_SLOT_VALIDATION_IO_FAILED
+                   : ECONTAINER_SLOT_VALIDATION_UNTRUSTED;
     }
     bool accepted = memcmp(info.package_sha256,
                            operation->package_sha256, 32U) == 0 &&
@@ -83,12 +82,18 @@ bool econtainer_package_slot_validate(void *context,
                     info.instruction_budget <= validation->max_instruction_budget &&
                     info.host_call_timeout_ms <= validation->max_host_call_timeout_ms &&
                     info.storage_limit_bytes <= validation->max_storage_limit_bytes;
+    econtainer_slot_validation_result_t result = ECONTAINER_SLOT_VALIDATION_UNTRUSTED;
     if (accepted) {
-        accepted = econtainer_package_wasm_check(
+        const econtainer_package_wasm_result_t wasm_result = econtainer_package_wasm_check(
             read_slot, (void *)&reader, &info, &validation->wasm_authorization,
-            validation->wasm_workspace) == ECONTAINER_PACKAGE_WASM_OK;
+            validation->wasm_workspace);
+        if (wasm_result == ECONTAINER_PACKAGE_WASM_OK) {
+            result = ECONTAINER_SLOT_VALIDATION_OK;
+        } else if (wasm_result == ECONTAINER_PACKAGE_WASM_READ_FAILED) {
+            result = ECONTAINER_SLOT_VALIDATION_IO_FAILED;
+        }
     }
-    if (accepted) {
+    if (result == ECONTAINER_SLOT_VALIDATION_OK) {
         *validation->verified_info = info;
     } else {
         memset(validation->package_workspace->manifest, 0,
@@ -96,5 +101,5 @@ bool econtainer_package_slot_validate(void *context,
         memset(validation->package_workspace->signature, 0,
                sizeof(validation->package_workspace->signature));
     }
-    return accepted;
+    return result;
 }

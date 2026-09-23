@@ -739,9 +739,12 @@ econtainer_slots_result_t econtainer_slots_write_and_prepare(
         const slot_reader_t reader = {io,
             geometry->slots[current.operation.slot].offset_bytes,
             current.operation.package_size_bytes};
-        if (!validate_fn(validate_context, &current.operation,
-                         flash_relative_read, (void *)&reader,
-                         current.operation.package_size_bytes)) {
+        const econtainer_slot_validation_result_t validation = validate_fn(
+            validate_context, &current.operation, flash_relative_read,
+            (void *)&reader, current.operation.package_size_bytes);
+        if (validation == ECONTAINER_SLOT_VALIDATION_IO_FAILED) {
+            result = ECONTAINER_SLOTS_IO_FAILED;
+        } else if (validation != ECONTAINER_SLOT_VALIDATION_OK) {
             result = ECONTAINER_SLOTS_UNTRUSTED;
         }
     }

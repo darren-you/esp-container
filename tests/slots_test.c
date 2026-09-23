@@ -216,26 +216,30 @@ static bool source_read(void *context, size_t offset_bytes,
     return true;
 }
 
-static bool validate_readback(void *context, const econtainer_slot_operation_t *operation,
-                              econtainer_slot_read_fn read_fn,
-                              void *read_context, size_t size_bytes)
+static econtainer_slot_validation_result_t validate_readback(
+    void *context, const econtainer_slot_operation_t *operation,
+    econtainer_slot_read_fn read_fn, void *read_context, size_t size_bytes)
 {
     fixture_t *fixture = context;
     uint8_t chunk[97];
     fixture->validation_called = true;
     if (fixture->reject_validation || size_bytes != fixture->length ||
         operation->package_size_bytes != fixture->length) {
-        return false;
+        return ECONTAINER_SLOT_VALIDATION_UNTRUSTED;
     }
     for (size_t offset = 0; offset < size_bytes; offset += sizeof(chunk)) {
         const size_t count = size_bytes - offset < sizeof(chunk) ?
                              size_bytes - offset : sizeof(chunk);
-        if (!read_fn(read_context, offset, chunk, count) ||
-            memcmp(chunk, fixture->bytes + offset, count) != 0) {
-            return false;
+        if (!read_fn(read_context, offset, chunk, count)) {
+            return ECONTAINER_SLOT_VALIDATION_IO_FAILED;
+        }
+        if (memcmp(chunk, fixture->bytes + offset, count) != 0) {
+            return ECONTAINER_SLOT_VALIDATION_UNTRUSTED;
         }
     }
-    return !read_fn(read_context, size_bytes, chunk, 1);
+    return read_fn(read_context, size_bytes, chunk, 1)
+               ? ECONTAINER_SLOT_VALIDATION_UNTRUSTED
+               : ECONTAINER_SLOT_VALIDATION_OK;
 }
 
 static econtainer_slot_binding_t binding(uint8_t firmware_seed, uint8_t slot,

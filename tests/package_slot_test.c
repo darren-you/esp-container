@@ -16,6 +16,8 @@ typedef struct {
     size_t read_count;
     size_t fail_after_read_count;
     size_t largest_read;
+    unsigned wasm_offset_read_count;
+    bool fail_wasm_scan_read;
 } fake_store_t;
 
 typedef struct {
@@ -82,7 +84,12 @@ static bool fake_flash_read(void *context, uint32_t offset,
     fake_store_t *store = context;
     assert(store->locked);
     ++store->read_count;
+    if (offset == FLASH_BASE + 3072U) {
+        ++store->wasm_offset_read_count;
+    }
     if (!flash_bounds(offset, length) ||
+        (store->fail_wasm_scan_read && offset == FLASH_BASE + 3072U &&
+         store->wasm_offset_read_count == 3U) ||
         (store->fail_after_read_count != 0 &&
          store->read_count >= store->fail_after_read_count)) return false;
     if (length > store->largest_read) store->largest_read = length;
@@ -207,6 +214,10 @@ int main(int argc, char **argv)
         /* Hash readback uses 256-byte chunks; fail on the first validator read. */
         store->fail_after_read_count = 1U + package_size / 256U;
     }
+    if (strcmp(argv[3], "wasm-read-fault") == 0) {
+        /* The third read of this offset belongs to the post-signature Wasm scan. */
+        store->fail_wasm_scan_read = true;
+    }
     const source_t source = {package, package_size};
     const econtainer_slots_result_t result = econtainer_slots_write_and_prepare(
         &io, &geometry, state.sequence, source_read, (void *)&source,
@@ -225,13 +236,21 @@ int main(int argc, char **argv)
         assert(memcmp(package_workspace.manifest + verified_info.product_version_offset_bytes,
                       "v0-1-0", verified_info.product_version_size_bytes) == 0);
     } else {
-        assert(result == ECONTAINER_SLOTS_UNTRUSTED);
+        if (strcmp(argv[3], "read-fault") == 0 ||
+            strcmp(argv[3], "wasm-read-fault") == 0) {
+            assert(result == ECONTAINER_SLOTS_IO_FAILED);
+        } else {
+            assert(result == ECONTAINER_SLOTS_UNTRUSTED);
+        }
         assert(state.phase == ECONTAINER_SLOT_WRITING);
         const econtainer_package_info_t empty = {0};
         assert(memcmp(&verified_info, &empty, sizeof(empty)) == 0);
     }
     assert(!store->locked);
     assert(store->largest_read <= 512);
+    if (strcmp(argv[3], "wasm-read-fault") == 0) {
+        assert(store->wasm_offset_read_count == 3U);
+    }
     printf("result=%d phase=%d max_read=%zu\n", (int)result, (int)state.phase,
            store->largest_read);
     free(store);
