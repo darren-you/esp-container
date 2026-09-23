@@ -1,3 +1,7 @@
+#ifndef ESP_PLATFORM
+#define _POSIX_C_SOURCE 200809L
+#endif
+
 #include "runtime_internal.h"
 
 #include "esp_container.h"
@@ -7,6 +11,11 @@
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef ESP_PLATFORM
+#include <time.h>
+#else
+#include "esp_timer.h"
+#endif
 
 struct econtainer_runtime {
     econtainer_runtime_limits_t limits;
@@ -18,6 +27,13 @@ struct econtainer_runtime {
     wasm_function_inst_t init_function;
     wasm_function_inst_t event_function;
     wasm_function_inst_t stop_function;
+    NativeSymbol native_symbols[2];
+    uint32_t native_count;
+    uint8_t *pending_log;
+    size_t pending_log_size;
+    atomic_bool call_active;
+    bool guest_active;
+    bool natives_registered;
     bool wamr_initialized;
 };
 
@@ -31,6 +47,11 @@ static bool limits_valid(const econtainer_runtime_limits_t *limits)
            limits->max_memory_pages > 0 && limits->stack_size_bytes > 0 &&
            limits->heap_size_bytes > 0 && limits->max_event_bytes > 0 &&
            limits->max_event_bytes <= limits->heap_size_bytes &&
+           (limits->allowed_capabilities &
+            (uint32_t)~(ECONTAINER_CAP_MONOTONIC_TIME | ECONTAINER_CAP_LOG)) == 0 &&
+           (limits->allowed_capabilities & ECONTAINER_CAP_LOG
+                ? limits->max_log_bytes > 0 && limits->max_log_bytes <= 256
+                : limits->max_log_bytes == 0) &&
            limits->init_instruction_budget > 0 &&
            limits->event_instruction_budget > 0 &&
            limits->stop_instruction_budget > 0;
@@ -117,12 +138,93 @@ static void release_runtime(econtainer_runtime_t *runtime)
     if (runtime->module != NULL) {
         wasm_runtime_unload(runtime->module);
     }
+    if (runtime->natives_registered) {
+        wasm_runtime_unregister_natives("econtainer", runtime->native_symbols);
+    }
+    free(runtime->pending_log);
     free(runtime->wasm_copy);
     if (runtime->wamr_initialized) {
         wasm_runtime_destroy();
     }
     free(runtime);
     atomic_store(&runtime_claimed, false);
+}
+
+static bool claim_call(econtainer_runtime_t *runtime)
+{
+    bool expected = false;
+    return atomic_compare_exchange_strong(&runtime->call_active, &expected, true);
+}
+
+static econtainer_runtime_t *native_owner(wasm_exec_env_t environment)
+{
+    econtainer_runtime_t *runtime =
+        wasm_runtime_get_function_attachment(environment);
+    if (runtime == NULL || !runtime->guest_active ||
+        runtime->environment != environment ||
+        runtime->instance != wasm_runtime_get_module_inst(environment) ||
+        !atomic_load(&runtime->call_active)) {
+        wasm_runtime_set_exception(wasm_runtime_get_module_inst(environment),
+                                   "Exception: invalid container host call owner");
+        return NULL;
+    }
+    return runtime;
+}
+
+static uint64_t native_monotonic_ms(wasm_exec_env_t environment)
+{
+    econtainer_runtime_t *runtime = native_owner(environment);
+    if (runtime == NULL ||
+        (runtime->limits.allowed_capabilities & ECONTAINER_CAP_MONOTONIC_TIME) == 0) {
+        if (runtime != NULL) {
+            wasm_runtime_set_exception(runtime->instance,
+                                       "Exception: container clock not authorized");
+        }
+        return 0;
+    }
+#ifdef ESP_PLATFORM
+    return (uint64_t)esp_timer_get_time() / 1000U;
+#else
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) {
+        wasm_runtime_set_exception(runtime->instance,
+                                   "Exception: monotonic clock failed");
+        return 0;
+    }
+    return (uint64_t)now.tv_sec * 1000U + (uint64_t)now.tv_nsec / 1000000U;
+#endif
+}
+
+static int32_t native_log(wasm_exec_env_t environment, uint32_t offset,
+                          uint32_t size_bytes)
+{
+    econtainer_runtime_t *runtime = native_owner(environment);
+    if (runtime == NULL ||
+        (runtime->limits.allowed_capabilities & ECONTAINER_CAP_LOG) == 0) {
+        if (runtime != NULL) {
+            wasm_runtime_set_exception(runtime->instance,
+                                       "Exception: container log not authorized");
+        }
+        return -1;
+    }
+    if (size_bytes == 0 || size_bytes > runtime->limits.max_log_bytes) {
+        return -1;
+    }
+    if (runtime->pending_log_size != 0) {
+        return -2;
+    }
+    if (!wasm_runtime_validate_app_addr(runtime->instance, offset, size_bytes)) {
+        return -1;
+    }
+    const uint8_t *source = wasm_runtime_addr_app_to_native(runtime->instance, offset);
+    if (source == NULL) {
+        wasm_runtime_set_exception(runtime->instance,
+                                   "Exception: invalid container log buffer");
+        return -1;
+    }
+    memcpy(runtime->pending_log, source, size_bytes);
+    runtime->pending_log_size = size_bytes;
+    return 0;
 }
 
 econtainer_runtime_result_t econtainer_runtime_open(const uint8_t *wasm,
@@ -135,8 +237,13 @@ econtainer_runtime_result_t econtainer_runtime_open(const uint8_t *wasm,
         !limits_valid(limits) || wasm_size_bytes > limits->max_wasm_bytes) {
         return ECONTAINER_RUNTIME_INVALID_INPUT;
     }
-    if (econtainer_wasm_check(wasm, wasm_size_bytes) != ECONTAINER_WASM_OK) {
+    uint32_t required_capabilities = 0;
+    if (!econtainer_wasm_imported_capabilities(wasm, wasm_size_bytes,
+                                               &required_capabilities)) {
         return ECONTAINER_RUNTIME_BAD_WASM;
+    }
+    if ((required_capabilities & ~limits->allowed_capabilities) != 0) {
+        return ECONTAINER_RUNTIME_NOT_AUTHORIZED;
     }
     if (!econtainer_wasm_memory_within_limit(wasm, wasm_size_bytes,
                                              limits->max_memory_pages)) {
@@ -153,6 +260,14 @@ econtainer_runtime_result_t econtainer_runtime_open(const uint8_t *wasm,
     }
     runtime->limits = *limits;
     runtime->state = ECONTAINER_RUNTIME_LOADED;
+    atomic_init(&runtime->call_active, false);
+    if ((required_capabilities & ECONTAINER_CAP_LOG) != 0) {
+        runtime->pending_log = malloc(limits->max_log_bytes);
+        if (runtime->pending_log == NULL) {
+            release_runtime(runtime);
+            return ECONTAINER_RUNTIME_NO_MEMORY;
+        }
+    }
     runtime->wasm_copy = malloc(wasm_size_bytes);
     if (runtime->wasm_copy == NULL) {
         release_runtime(runtime);
@@ -164,6 +279,24 @@ econtainer_runtime_result_t econtainer_runtime_open(const uint8_t *wasm,
         return ECONTAINER_RUNTIME_ENGINE_FAILURE;
     }
     runtime->wamr_initialized = true;
+    if ((required_capabilities & ECONTAINER_CAP_MONOTONIC_TIME) != 0) {
+        runtime->native_symbols[runtime->native_count++] = (NativeSymbol){
+            "monotonic_ms", (void *)native_monotonic_ms, "()I", runtime
+        };
+    }
+    if ((required_capabilities & ECONTAINER_CAP_LOG) != 0) {
+        runtime->native_symbols[runtime->native_count++] = (NativeSymbol){
+            "log", (void *)native_log, "(ii)i", runtime
+        };
+    }
+    if (runtime->native_count != 0) {
+        if (!wasm_runtime_register_natives("econtainer", runtime->native_symbols,
+                                           runtime->native_count)) {
+            release_runtime(runtime);
+            return ECONTAINER_RUNTIME_ENGINE_FAILURE;
+        }
+        runtime->natives_registered = true;
+    }
     char error[128] = {0};
     runtime->module = wasm_runtime_load(runtime->wasm_copy, (uint32_t)wasm_size_bytes,
                                         error, sizeof(error));
@@ -210,7 +343,11 @@ static econtainer_runtime_result_t invoke(econtainer_runtime_t *runtime,
 {
     wasm_runtime_clear_exception(runtime->instance);
     wasm_runtime_set_instruction_count_limit(runtime->environment, budget);
-    if (!wasm_runtime_call_wasm(runtime->environment, function, argc, arguments)) {
+    runtime->guest_active = true;
+    const bool call_ok = wasm_runtime_call_wasm(runtime->environment, function,
+                                                argc, arguments);
+    runtime->guest_active = false;
+    if (!call_ok) {
         const char *exception = wasm_runtime_get_exception(runtime->instance);
         runtime->state = ECONTAINER_RUNTIME_FAILED;
         return exception != NULL &&
@@ -228,7 +365,14 @@ static econtainer_runtime_result_t invoke(econtainer_runtime_t *runtime,
 
 econtainer_runtime_result_t econtainer_runtime_init(econtainer_runtime_t *runtime)
 {
-    if (runtime == NULL || runtime->state != ECONTAINER_RUNTIME_LOADED) {
+    if (runtime == NULL) {
+        return ECONTAINER_RUNTIME_INVALID_STATE;
+    }
+    if (!claim_call(runtime)) {
+        return ECONTAINER_RUNTIME_BUSY;
+    }
+    if (runtime->state != ECONTAINER_RUNTIME_LOADED) {
+        atomic_store(&runtime->call_active, false);
         return ECONTAINER_RUNTIME_INVALID_STATE;
     }
     uint32_t arguments[2] = {0};
@@ -237,13 +381,16 @@ econtainer_runtime_result_t econtainer_runtime_init(econtainer_runtime_t *runtim
                                                 runtime->limits.init_instruction_budget,
                                                 0, arguments, &result);
     if (status != ECONTAINER_RUNTIME_OK) {
+        atomic_store(&runtime->call_active, false);
         return status;
     }
     if (result != 0) {
         runtime->state = ECONTAINER_RUNTIME_FAILED;
+        atomic_store(&runtime->call_active, false);
         return ECONTAINER_RUNTIME_GUEST_FAILURE;
     }
     runtime->state = ECONTAINER_RUNTIME_RUNNING;
+    atomic_store(&runtime->call_active, false);
     return ECONTAINER_RUNTIME_OK;
 }
 
@@ -252,11 +399,19 @@ econtainer_runtime_result_t econtainer_runtime_on_event(econtainer_runtime_t *ru
                                                        size_t event_size_bytes,
                                                        int32_t *guest_result)
 {
-    if (runtime == NULL || runtime->state != ECONTAINER_RUNTIME_RUNNING) {
+    if (runtime == NULL) {
+        return ECONTAINER_RUNTIME_INVALID_STATE;
+    }
+    if (!claim_call(runtime)) {
+        return ECONTAINER_RUNTIME_BUSY;
+    }
+    if (runtime->state != ECONTAINER_RUNTIME_RUNNING) {
+        atomic_store(&runtime->call_active, false);
         return ECONTAINER_RUNTIME_INVALID_STATE;
     }
     if (guest_result == NULL || event_size_bytes > runtime->limits.max_event_bytes ||
         (event_size_bytes > 0 && event == NULL)) {
+        atomic_store(&runtime->call_active, false);
         return ECONTAINER_RUNTIME_INVALID_INPUT;
     }
     uint64_t offset = 0;
@@ -268,6 +423,7 @@ econtainer_runtime_result_t econtainer_runtime_on_event(econtainer_runtime_t *ru
             if (offset != 0) {
                 wasm_runtime_module_free(runtime->instance, offset);
             }
+            atomic_store(&runtime->call_active, false);
             return ECONTAINER_RUNTIME_NO_MEMORY;
         }
         memcpy(guest_address, event, event_size_bytes);
@@ -283,6 +439,7 @@ econtainer_runtime_result_t econtainer_runtime_on_event(econtainer_runtime_t *ru
     if (status == ECONTAINER_RUNTIME_OK) {
         *guest_result = result;
     }
+    atomic_store(&runtime->call_active, false);
     return status;
 }
 
@@ -291,10 +448,15 @@ econtainer_runtime_result_t econtainer_runtime_stop(econtainer_runtime_t *runtim
     if (runtime == NULL) {
         return ECONTAINER_RUNTIME_INVALID_STATE;
     }
+    if (!claim_call(runtime)) {
+        return ECONTAINER_RUNTIME_BUSY;
+    }
     if (runtime->state == ECONTAINER_RUNTIME_STOPPED) {
+        atomic_store(&runtime->call_active, false);
         return ECONTAINER_RUNTIME_OK;
     }
     if (runtime->state != ECONTAINER_RUNTIME_RUNNING) {
+        atomic_store(&runtime->call_active, false);
         return ECONTAINER_RUNTIME_INVALID_STATE;
     }
     uint32_t arguments[2] = {0};
@@ -303,13 +465,16 @@ econtainer_runtime_result_t econtainer_runtime_stop(econtainer_runtime_t *runtim
                                                 runtime->limits.stop_instruction_budget,
                                                 0, arguments, &result);
     if (status != ECONTAINER_RUNTIME_OK) {
+        atomic_store(&runtime->call_active, false);
         return status;
     }
     if (result != 0) {
         runtime->state = ECONTAINER_RUNTIME_FAILED;
+        atomic_store(&runtime->call_active, false);
         return ECONTAINER_RUNTIME_GUEST_FAILURE;
     }
     runtime->state = ECONTAINER_RUNTIME_STOPPED;
+    atomic_store(&runtime->call_active, false);
     return ECONTAINER_RUNTIME_OK;
 }
 
@@ -318,11 +483,42 @@ econtainer_runtime_state_t econtainer_runtime_state(const econtainer_runtime_t *
     return runtime == NULL ? ECONTAINER_RUNTIME_FAILED : runtime->state;
 }
 
-void econtainer_runtime_close(econtainer_runtime_t **runtime)
+econtainer_runtime_result_t econtainer_runtime_take_log(econtainer_runtime_t *runtime,
+                                                       uint8_t *output,
+                                                       size_t output_capacity,
+                                                       size_t *log_size_bytes)
+{
+    if (runtime == NULL || log_size_bytes == NULL) {
+        return ECONTAINER_RUNTIME_INVALID_INPUT;
+    }
+    if (!claim_call(runtime)) {
+        return ECONTAINER_RUNTIME_BUSY;
+    }
+    econtainer_runtime_result_t status = ECONTAINER_RUNTIME_OK;
+    if (runtime->pending_log_size == 0) {
+        status = ECONTAINER_RUNTIME_NO_LOG;
+    }
+    else if (output == NULL || output_capacity < runtime->pending_log_size) {
+        status = ECONTAINER_RUNTIME_INVALID_INPUT;
+    }
+    else {
+        memcpy(output, runtime->pending_log, runtime->pending_log_size);
+        *log_size_bytes = runtime->pending_log_size;
+        runtime->pending_log_size = 0;
+    }
+    atomic_store(&runtime->call_active, false);
+    return status;
+}
+
+econtainer_runtime_result_t econtainer_runtime_close(econtainer_runtime_t **runtime)
 {
     if (runtime == NULL || *runtime == NULL) {
-        return;
+        return ECONTAINER_RUNTIME_OK;
+    }
+    if (!claim_call(*runtime)) {
+        return ECONTAINER_RUNTIME_BUSY;
     }
     release_runtime(*runtime);
     *runtime = NULL;
+    return ECONTAINER_RUNTIME_OK;
 }

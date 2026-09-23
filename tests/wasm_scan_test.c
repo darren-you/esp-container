@@ -13,7 +13,7 @@ int main(void)
     const uint8_t start[] = {0, 'a', 's', 'm', 1, 0, 0, 0, 8, 1, 0};
     assert(econtainer_wasm_check(start, sizeof(start)) == ECONTAINER_WASM_UNSUPPORTED);
     const uint8_t import[] = {0, 'a', 's', 'm', 1, 0, 0, 0, 2, 1, 1};
-    assert(econtainer_wasm_check(import, sizeof(import)) == ECONTAINER_WASM_UNSUPPORTED);
+    assert(econtainer_wasm_check(import, sizeof(import)) == ECONTAINER_WASM_INVALID);
     const char *name = "__post_instantiate";
     uint8_t exported[8 + 2 + 1 + 1 + 18 + 2] = {0, 'a', 's', 'm', 1, 0, 0, 0};
     exported[8] = 7;

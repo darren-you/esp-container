@@ -1,4 +1,5 @@
 #include "runtime_internal.h"
+#include "esp_container.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -208,10 +209,123 @@ static bool test_repeated_release(const char *counter_path)
     return true;
 }
 
+static bool test_host_api(const char *host_api_path)
+{
+    size_t length = 0;
+    uint8_t *bytes = read_file(host_api_path, &length);
+    CHECK(bytes != NULL);
+    uint32_t imports = 0;
+    CHECK(econtainer_wasm_imported_capabilities(bytes, length, &imports));
+    CHECK(imports == (ECONTAINER_CAP_MONOTONIC_TIME | ECONTAINER_CAP_LOG));
+    econtainer_runtime_t *runtime = NULL;
+    CHECK(econtainer_runtime_open(bytes, length, &limits, &runtime) ==
+          ECONTAINER_RUNTIME_NOT_AUTHORIZED);
+    econtainer_runtime_limits_t authorized = limits;
+    authorized.allowed_capabilities = ECONTAINER_CAP_MONOTONIC_TIME;
+    CHECK(econtainer_runtime_open(bytes, length, &authorized, &runtime) ==
+          ECONTAINER_RUNTIME_NOT_AUTHORIZED);
+    authorized.allowed_capabilities |= ECONTAINER_CAP_LOG;
+    CHECK(econtainer_runtime_open(bytes, length, &authorized, &runtime) ==
+          ECONTAINER_RUNTIME_INVALID_INPUT);
+    authorized.max_log_bytes = 16;
+    CHECK(econtainer_runtime_open(bytes, length, &authorized, &runtime) ==
+          ECONTAINER_RUNTIME_OK);
+    CHECK(econtainer_runtime_init(runtime) == ECONTAINER_RUNTIME_OK);
+    uint8_t log[16] = {0};
+    size_t log_size = 99;
+    CHECK(econtainer_runtime_take_log(runtime, log, 2, &log_size) ==
+          ECONTAINER_RUNTIME_INVALID_INPUT);
+    CHECK(log_size == 99);
+    CHECK(econtainer_runtime_take_log(runtime, log, sizeof(log), &log_size) ==
+          ECONTAINER_RUNTIME_OK);
+    CHECK(log_size == 4 && memcmp(log, "init", 4) == 0);
+    CHECK(econtainer_runtime_take_log(runtime, log, sizeof(log), &log_size) ==
+          ECONTAINER_RUNTIME_NO_LOG);
+    int32_t result = 99;
+    uint8_t first[] = {1, 'a', 'b', 'c'};
+    CHECK(econtainer_runtime_on_event(runtime, first, sizeof(first), &result) ==
+          ECONTAINER_RUNTIME_OK);
+    CHECK(result == 0);
+    memset(first, 'x', sizeof(first));
+    CHECK(econtainer_runtime_take_log(runtime, log, sizeof(log), &log_size) ==
+          ECONTAINER_RUNTIME_OK);
+    CHECK(log_size == 3 && memcmp(log, "abc", 3) == 0);
+    const uint8_t twice[] = {2};
+    CHECK(econtainer_runtime_on_event(runtime, twice, sizeof(twice), &result) ==
+          ECONTAINER_RUNTIME_OK);
+    CHECK(result == -2);
+    CHECK(econtainer_runtime_take_log(runtime, log, sizeof(log), &log_size) ==
+          ECONTAINER_RUNTIME_OK);
+    CHECK(log_size == 5 && memcmp(log, "first", 5) == 0);
+    const uint8_t too_long[] = {4};
+    CHECK(econtainer_runtime_on_event(runtime, too_long, sizeof(too_long), &result) ==
+          ECONTAINER_RUNTIME_OK);
+    CHECK(result == -1);
+    const uint8_t time_event[] = {5};
+    CHECK(econtainer_runtime_on_event(runtime, time_event, sizeof(time_event), &result) ==
+          ECONTAINER_RUNTIME_OK);
+    CHECK(result == 0);
+    CHECK(econtainer_runtime_stop(runtime) == ECONTAINER_RUNTIME_OK);
+    CHECK(econtainer_runtime_close(&runtime) == ECONTAINER_RUNTIME_OK);
+    CHECK(runtime == NULL);
+
+    CHECK(econtainer_runtime_open(bytes, length, &authorized, &runtime) ==
+          ECONTAINER_RUNTIME_OK);
+    CHECK(econtainer_runtime_init(runtime) == ECONTAINER_RUNTIME_OK);
+    CHECK(econtainer_runtime_take_log(runtime, log, sizeof(log), &log_size) ==
+          ECONTAINER_RUNTIME_OK);
+    const uint8_t invalid_pointer[] = {3};
+    econtainer_runtime_result_t invalid_result = econtainer_runtime_on_event(
+        runtime, invalid_pointer, sizeof(invalid_pointer), &result);
+    CHECK(invalid_result == ECONTAINER_RUNTIME_ENGINE_FAILURE);
+    CHECK(econtainer_runtime_state(runtime) == ECONTAINER_RUNTIME_FAILED);
+    CHECK(econtainer_runtime_close(&runtime) == ECONTAINER_RUNTIME_OK);
+    CHECK(econtainer_runtime_open(bytes, length, &authorized, &runtime) ==
+          ECONTAINER_RUNTIME_OK);
+    CHECK(econtainer_runtime_init(runtime) == ECONTAINER_RUNTIME_OK);
+    CHECK(econtainer_runtime_take_log(runtime, log, sizeof(log), &log_size) ==
+          ECONTAINER_RUNTIME_OK);
+    CHECK(log_size == 4 && memcmp(log, "init", 4) == 0);
+    CHECK(econtainer_runtime_close(&runtime) == ECONTAINER_RUNTIME_OK);
+
+    /* An exact module/function/signature is required before WAMR loading. */
+    uint8_t *bad = malloc(length);
+    CHECK(bad != NULL);
+    memcpy(bad, bytes, length);
+    bool found = false;
+    for (size_t index = 0; index + 10 < length; ++index) {
+        if (memcmp(bad + index, "econtainer", 10) == 0) {
+            bad[index] = 'x';
+            found = true;
+            break;
+        }
+    }
+    CHECK(found);
+    CHECK(econtainer_runtime_open(bad, length, &authorized, &runtime) ==
+          ECONTAINER_RUNTIME_BAD_WASM);
+    memcpy(bad, bytes, length);
+    found = false;
+    const uint8_t clock_type[] = {0x60, 0x00, 0x01, 0x7e};
+    for (size_t index = 0; index + sizeof(clock_type) <= length; ++index) {
+        if (memcmp(bad + index, clock_type, sizeof(clock_type)) == 0) {
+            bad[index + 3] = 0x7f;
+            found = true;
+            break;
+        }
+    }
+    CHECK(found);
+    CHECK(econtainer_wasm_check(bad, length) == ECONTAINER_WASM_UNSUPPORTED);
+    CHECK(econtainer_runtime_open(bad, length, &authorized, &runtime) ==
+          ECONTAINER_RUNTIME_BAD_WASM);
+    free(bad);
+    free(bytes);
+    return true;
+}
+
 int main(int argc, char **argv)
 {
-    if (argc != 7) {
-        fprintf(stderr, "usage: %s counter event-read init-loop event-loop stop-loop wrong-signature\n",
+    if (argc != 8) {
+        fprintf(stderr, "usage: %s counter event-read init-loop event-loop stop-loop wrong-signature host-api\n",
                 argv[0]);
         return 2;
     }
@@ -220,7 +334,7 @@ int main(int argc, char **argv)
                         test_loop(argv[3], 0) && test_loop(argv[4], 1) &&
                         test_loop(argv[5], 2) &&
                         test_wrong_abi_and_release(argv[6], argv[1]) &&
-                        test_repeated_release(argv[1]);
+                        test_repeated_release(argv[1]) && test_host_api(argv[7]);
     if (passed) {
         fprintf(stderr, "runtime instance: counter/event copy/three budgets/ABI/release passed\n");
     }

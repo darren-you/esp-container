@@ -191,6 +191,27 @@ class ProductPackageTest(unittest.TestCase):
         with self.assertRaisesRegex(pkg.PackageError, "自动构造"):
             pkg.create_manifest(SPEC, WASM + b"\x07" + bytes((len(export),)) + export)
 
+    def test_exact_host_imports_require_manifest_capabilities(self) -> None:
+        types = b"\x02\x60\x00\x01\x7e\x60\x02\x7f\x7f\x01\x7f"
+        imports = (b"\x02\x0a" + b"econtainer" + b"\x0cmonotonic_ms\x00\x00"
+                   + b"\x0aecontainer\x03log\x00\x01")
+        wasm = WASM + b"\x01" + bytes((len(types),)) + types + b"\x02" + bytes((len(imports),)) + imports
+        self.assertEqual(pkg._wasm(wasm), frozenset({"log", "monotonic-time"}))
+        with self.assertRaisesRegex(pkg.PackageError, "授权"):
+            pkg.create_manifest(SPEC, wasm)
+        spec = copy.deepcopy(SPEC)
+        spec["required_capabilities"] = ["log", "monotonic-time"]
+        manifest = pkg.create_manifest(spec, wasm)
+        signature = pkg.sign_manifest(manifest, self.private, "test-key")
+        package = pkg.pack(manifest, signature, wasm, max_wasm_bytes=1024)
+        self.assertEqual(pkg.verify_package(package, self.public, "test-key",
+                                            max_wasm_bytes=1024)["required_capabilities"],
+                         ["log", "monotonic-time"])
+        with self.assertRaisesRegex(pkg.PackageError, "imports"):
+            pkg._wasm(wasm.replace(b"monotonic_ms", b"monotonic_us"))
+        with self.assertRaisesRegex(pkg.PackageError, "imports"):
+            pkg._wasm(wasm.replace(b"\x60\x00\x01\x7e", b"\x60\x00\x01\x7f"))
+
     def test_tar_member_and_tail_rejected(self) -> None:
         manifest, _, package = self._package()
         signature_header, wasm_header, archive_end = self._member_offsets(manifest)

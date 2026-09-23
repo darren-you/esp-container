@@ -50,6 +50,21 @@ def main() -> int:
             "-o", str(args.output_dir / f"{name}.wasm"),
         ]
         subprocess.run(command, check=True)
+    host_command = [
+        str(clang), "--target=wasm32-unknown-unknown", "-std=c11", "-O2",
+        "-Wall", "-Wextra", "-Werror", "-nostdlib", "-ffreestanding",
+        "-fno-builtin", "-fno-exceptions", "-fno-stack-protector",
+        *(f"-mno-{feature}" for feature in counter_guest.FEATURES_OFF),
+        "-I", str(ROOT / "guest-sdk" / "include"),
+        str(ROOT / "tests" / "host_api_guest.c"),
+        "-Wl,--no-entry", "-Wl,--allow-undefined",
+        *(f"-Wl,--export={export}" for export in counter_guest.EXPORT_TYPES),
+        f"-Wl,--initial-memory={counter_guest.MEMORY_PAGES * counter_guest.PAGE_BYTES}",
+        f"-Wl,--max-memory={counter_guest.MEMORY_PAGES * counter_guest.PAGE_BYTES}",
+        f"-Wl,-z,stack-size={counter_guest.STACK_BYTES}",
+        "-o", str(args.output_dir / "host-api.wasm"),
+    ]
+    subprocess.run(host_command, check=True)
     return 0
 
 

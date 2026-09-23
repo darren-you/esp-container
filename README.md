@@ -1,6 +1,6 @@
 # ESP Container
 
-`esp-container` 是面向 ESP-IDF 的业务包运行组件。当前提供独立 `esp_container` IDF 组件、受限 Wasm 扫描器、counter guest 的固定 freestanding 构建与静态检查、公开 guest SDK 草案、确定性 ustar 打包与 RSA-3072/PSS 验包工具，以及组件私有的 WAMR Classic 单实例运行切片。签名包安装、Flash 三槽、完整实例资源管理、Base 联合升级与实板容量尚未完成，当前代码只可作为研发检查点。
+`esp-container` 是面向 ESP-IDF 的业务包运行组件。当前提供独立 `esp_container` IDF 组件、受限 Wasm 扫描器、counter guest 的固定 freestanding 构建与静态检查、公开 guest SDK 草案、确定性 ustar 打包与 RSA-3072/PSS 验包工具，以及组件私有的 WAMR Classic 单实例运行切片。该私有切片增加逐项授权的单调时间和有界日志导入；签名包安装、Flash 三槽、完整实例资源管理、Base 联合升级与实板容量尚未完成，当前代码只可作为研发检查点。
 
 ## 架构拓扑
 
@@ -13,6 +13,8 @@ flowchart LR
     tool --> pkg["product.pkg：manifest / signature / app.wasm"]
     pkg --> scanner["esp_container：Wasm 入口与 section 检查"]
     scanner --> runtime["组件私有单实例运行 API：ABI / 事件复制 / 生命周期"]
+    sdk["guest-sdk：精确导入声明"] --> runtime
+    runtime --> host["单调时间 / 实例私有待取日志"]
     runtime --> wamr["锁定 WAMR Classic：加载 / 每入口指令预算"]
     sample["examples/c3-runtime：独立 C3 最小工程"] --> scanner
     sample --> wamr
@@ -43,7 +45,7 @@ cmake --build build-wamr
 ctest --test-dir build-wamr --output-on-failure
 ```
 
-设置官方 wasi-sdk 33 的 `WASI_SDK_ROOT` 时，第三项 `runtime_instance` 测试会编译真正的 counter 和故障 guest，在锁定 WAMR 上检查单实例、事件复制、ABI、三个入口的额度和失败释放。没有该工具链时仍可运行原有两项 CTest；详见[运行切片检查点](docs/operations/single-instance-runtime-checkpoint.md)。这些主机测试不能代替设备上的完整运行。[counter guest 样例](examples/counter/README.md)记录固定编译与静态 ABI/profile 检查入口。
+设置官方 wasi-sdk 33 的 `WASI_SDK_ROOT` 时，第三项 `runtime_instance` 测试会编译真正的 counter 和故障 guest，在锁定 WAMR 上检查单实例、事件复制、ABI、三个入口的额度、逐项导入授权、日志边界和失败释放。没有该工具链时仍可运行原有两项 CTest；详见[运行切片检查点](docs/operations/single-instance-runtime-checkpoint.md)与[宿主导入检查点](docs/operations/host-api-checkpoint.md)。这些主机测试不能代替设备上的完整运行。[counter guest 样例](examples/counter/README.md)记录固定编译与静态 ABI/profile 检查入口。
 
 host 工具的包格式和使用步骤见 [包工具](tools/README.md)。[C3 原型](examples/c3-runtime/README.md)需要固定 SDK；原样 WAMR 2.4.4 与固定 IDF 6.1 的编译问题已在公开 fork 的源码中直接修复，具体构建结果见[开发检查点](docs/operations/development-checkpoint.md)。[五组件仓外容量原型](docs/operations/five-component-capacity-probe.md)记录签名镜像与分区几何，[QEMU counter 容量切片](docs/operations/qemu-counter-capacity-probe.md)记录独立 C3 样例的动态堆采样；两者均未闭合产品容量验收。本地构建不会写板。当前代码没有可发布的产品包运行/安装链路，不要把主机验包成功当作设备安全启动。
 

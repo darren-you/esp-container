@@ -28,4 +28,4 @@ WASI_SDK_ROOT="$WASI_SDK_ROOT" python3 -m unittest tests.test_counter_guest -v
 
 可先按[仓根说明](../../README.md)构建锁定 WAMR 主机测试，再运行 `build-wamr/wamr_classic_test dist/app.wasm`，实际调用 init、两次 event、非法指针事件和 stop。该主机测试不会写板，也不证明设备资源配额、宿主句柄和事件复制正确。
 
-`spec.example.json` 的 128 KiB 内存和 4 KiB 栈值与此样例编译输入一致，仅用于 host 打包测试。P6-03 尚未证明 C3 容量，P6-04 的宿主授权、句柄归属和运行期 ABI 尚未冻结；P6-05 的签名向量与设备验包也未完成，因此本样例还不是可安装产品包。
+`spec.example.json` 的 128 KiB 内存和 4 KiB 栈值与此样例编译输入一致，仅用于 host 打包测试。另有[宿主导入检查点](../../docs/operations/host-api-checkpoint.md)验证单调时间与有界日志的私有运行切片；这个 counter 仍无导入。P6-03 尚未证明 C3 容量，P6-04 的完整宿主授权、句柄归属和公开运行期 ABI 尚未冻结；P6-05 的签名向量与设备验包也未完成，因此本样例还不是可安装产品包。
