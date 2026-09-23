@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+import copy
+import hashlib
 import json
 import sys
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
 
+from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import product_package as pkg  # noqa: E402
@@ -56,11 +60,43 @@ class ProductPackageTest(unittest.TestCase):
         package = pkg.pack(manifest, signature, wasm, max_wasm_bytes=1024)
         return manifest, signature, package
 
+    @staticmethod
+    def _header_field(package: bytes, offset: int, start: int, end: int,
+                      replacement: bytes) -> bytes:
+        assert len(replacement) == end - start
+        changed = bytearray(package)
+        changed[offset + start:offset + end] = replacement
+        changed[offset + 148:offset + 156] = b" " * 8
+        checksum = sum(changed[offset:offset + 512])
+        changed[offset + 148:offset + 156] = f"{checksum:06o}\0 ".encode("ascii")
+        return bytes(changed)
+
+    @staticmethod
+    def _member_offsets(manifest: bytes) -> tuple[int, int, int]:
+        signature_header = 512 + ((len(manifest) + 511) // 512) * 512
+        wasm_header = signature_header + 512 + 512
+        archive_end = wasm_header + 512 + 512
+        return signature_header, wasm_header, archive_end
+
     def test_signed_round_trip_and_deterministic_pack(self) -> None:
         manifest, signature, package = self._package()
         self.assertEqual(pkg.verify_package(package, self.public, "test-key", max_wasm_bytes=1024)["product_id"], "counter")
         self.assertEqual(package, pkg.pack(manifest, signature, WASM, max_wasm_bytes=1024))
         self.assertEqual(pkg.unpack(package, max_wasm_bytes=1024), (manifest, signature, WASM))
+
+    def test_fixed_host_encoding_vector(self) -> None:
+        # 固定字节只检查 host 编码，不冻结发布密钥，也不依赖 RSA-PSS 的随机 salt。
+        manifest = pkg.create_manifest(SPEC, WASM)
+        signature = bytes(range(256)) + bytes(range(128))
+        package = pkg.pack(manifest, signature, WASM, max_wasm_bytes=1024)
+        self.assertEqual(len(manifest), 545)
+        self.assertEqual(hashlib.sha256(manifest).hexdigest(),
+                         "0e6cba55543b3bd443881f08dc8a0c2d431d0376fe04c3ab901bb858cc0da6e4")
+        self.assertEqual(len(package), 10240)
+        self.assertEqual(hashlib.sha256(package).hexdigest(),
+                         "f72ef6b500a1dee059625df8772b2e5ad5c9d7a4fd5adf04e4fb1ce0271e6c67")
+        self.assertEqual(pkg.unpack(package, max_wasm_bytes=1024),
+                         (manifest, signature, WASM))
 
     def test_payload_mutation_rejected(self) -> None:
         _, _, package = self._package()
@@ -89,6 +125,23 @@ class ProductPackageTest(unittest.TestCase):
         with self.assertRaisesRegex(pkg.PackageError, "key ID"):
             pkg.sign_manifest(pkg.create_manifest(SPEC, WASM), self.private, "other-key")
 
+    def test_wrong_pss_parameters_and_signature_mutation_rejected(self) -> None:
+        manifest, _, package = self._package()
+        signature_header, _, _ = self._member_offsets(manifest)
+        changed = bytearray(package)
+        changed[signature_header + 512] ^= 1
+        with self.assertRaisesRegex(pkg.PackageError, "签名验证失败"):
+            pkg.verify_package(bytes(changed), self.public, "test-key", max_wasm_bytes=1024)
+
+        key = serialization.load_pem_private_key(self.private.read_bytes(), password=None)
+        wrong_salt = key.sign(pkg.DOMAIN + manifest,
+                              padding.PSS(mgf=padding.MGF1(hashes.SHA256()),
+                                          salt_length=padding.PSS.MAX_LENGTH),
+                              hashes.SHA256())
+        wrong_package = pkg.pack(manifest, wrong_salt, WASM, max_wasm_bytes=1024)
+        with self.assertRaisesRegex(pkg.PackageError, "签名验证失败"):
+            pkg.verify_package(wrong_package, self.public, "test-key", max_wasm_bytes=1024)
+
     def test_duplicate_json_key_and_unknown_field_rejected(self) -> None:
         manifest, _, _ = self._package()
         with self.assertRaisesRegex(pkg.PackageError, "重复"):
@@ -97,6 +150,34 @@ class ProductPackageTest(unittest.TestCase):
         value["unknown"] = True
         with self.assertRaisesRegex(pkg.PackageError, "未知"):
             pkg._manifest(pkg._json_bytes(value))
+        with self.assertRaisesRegex(pkg.PackageError, "重复"):
+            pkg._manifest(manifest.replace(b'"size_bytes":8',
+                                           b'"size_bytes":8,"size_bytes":8'))
+
+    def test_manifest_schema_bounds_rejected(self) -> None:
+        manifest, _, _ = self._package()
+        base = json.loads(manifest)
+        changes = (
+            ("包格式", lambda value: value.update(package_format_version=2)),
+            ("字段", lambda value: value["limits"].update(unknown_limit=1)),
+            ("字段", lambda value: value["payload"].update(extra_path="app.wasm")),
+            ("guest_abi_version", lambda value: value.update(guest_abi_version=0x100000000)),
+            ("data_schema_version", lambda value: value.update(data_schema_version=0)),
+            ("required_capabilities", lambda value: value.update(required_capabilities=["gpio", "gpio"])),
+            ("限制", lambda value: value["limits"].update(instruction_budget=0)),
+            ("限制", lambda value: value["limits"].update(instruction_budget=0x100000000)),
+            ("限制", lambda value: value["limits"].update(host_call_timeout_ms=True)),
+            ("限制", lambda value: value["limits"].update(storage_limit_bytes=-1)),
+            ("payload 长度", lambda value: value["payload"].update(size_bytes=True)),
+            ("payload 路径", lambda value: value["payload"].update(path="../app.wasm")),
+            ("签名算法", lambda value: value.update(signature_algorithm="rsa-3072-pkcs1-sha256")),
+        )
+        for error, mutate in changes:
+            with self.subTest(error=error, mutation=mutate):
+                value = copy.deepcopy(base)
+                mutate(value)
+                with self.assertRaisesRegex(pkg.PackageError, error):
+                    pkg._manifest(pkg._json_bytes(value))
 
     def test_start_and_truncated_wasm_rejected(self) -> None:
         with self.assertRaisesRegex(pkg.PackageError, "start"):
@@ -111,14 +192,50 @@ class ProductPackageTest(unittest.TestCase):
             pkg.create_manifest(SPEC, WASM + b"\x07" + bytes((len(export),)) + export)
 
     def test_tar_member_and_tail_rejected(self) -> None:
-        _, _, package = self._package()
+        manifest, _, package = self._package()
+        signature_header, wasm_header, archive_end = self._member_offsets(manifest)
         changed = bytearray(package)
         changed[:8] = b"evil.bin"
         with self.assertRaises(pkg.PackageError):
             pkg.unpack(bytes(changed), max_wasm_bytes=1024)
+        for offset, name in ((signature_header, b"manifest.json"),
+                             (wasm_header, b"../app.wasm"),
+                             (wasm_header, b"/app.wasm")):
+            with self.subTest(member=name):
+                changed = self._header_field(package, offset, 0, 100,
+                                             name + bytes(100 - len(name)))
+                with self.assertRaisesRegex(pkg.PackageError, "成员名称"):
+                    pkg.unpack(changed, max_wasm_bytes=1024)
+        extra = bytearray(package)
+        extra[archive_end:archive_end + 512] = pkg._member_info("extra.bin", 0).tobuf(
+            format=tarfile.USTAR_FORMAT)
+        with self.assertRaisesRegex(pkg.PackageError, "归档结束块"):
+            pkg.unpack(bytes(extra), max_wasm_bytes=1024)
         changed = bytearray(package)
         changed[-1] = 1
         with self.assertRaisesRegex(pkg.PackageError, "尾随"):
+            pkg.unpack(bytes(changed), max_wasm_bytes=1024)
+        with self.assertRaisesRegex(pkg.PackageError, "尾随"):
+            pkg.verify_package(package + bytes(512), self.public, "test-key",
+                               max_wasm_bytes=1024)
+
+    def test_ustar_length_type_checksum_and_padding_rejected(self) -> None:
+        manifest, _, package = self._package()
+        signature_header, wasm_header, _ = self._member_offsets(manifest)
+        changed = self._header_field(package, wasm_header, 124, 136,
+                                     f"{1025:011o}\0".encode("ascii"))
+        with self.assertRaisesRegex(pkg.PackageError, "长度超限"):
+            pkg.unpack(changed, max_wasm_bytes=1024)
+        changed = self._header_field(package, signature_header, 156, 157, b"2")
+        with self.assertRaisesRegex(pkg.PackageError, "类型"):
+            pkg.unpack(changed, max_wasm_bytes=1024)
+        changed = bytearray(package)
+        changed[148] = ord("7") if changed[148] != ord("7") else ord("6")
+        with self.assertRaisesRegex(pkg.PackageError, "校验和"):
+            pkg.unpack(bytes(changed), max_wasm_bytes=1024)
+        changed = bytearray(package)
+        changed[512 + len(manifest)] = 1
+        with self.assertRaisesRegex(pkg.PackageError, "填充非零"):
             pkg.unpack(bytes(changed), max_wasm_bytes=1024)
 
     def test_noncanonical_ustar_header_rejected_with_valid_checksum(self) -> None:

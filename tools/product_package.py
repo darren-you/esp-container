@@ -292,7 +292,11 @@ def unpack(package: bytes, *, max_wasm_bytes: int) -> tuple[bytes, bytes, bytes]
         if package[cursor:cursor + padding_bytes] != bytes(padding_bytes):
             raise PackageError("成员填充非零")
         cursor += padding_bytes
-    if len(package) < cursor + 1024 or package[cursor:] != bytes(len(package) - cursor):
+    # tarfile 写入两个结束块后补齐至完整 ustar record。额外零块会让同一份
+    # 已签名 payload 对应多个可接受包字节及不同包摘要，必须拒绝。
+    end = cursor + 1024
+    canonical_size = ((end + tarfile.RECORDSIZE - 1) // tarfile.RECORDSIZE) * tarfile.RECORDSIZE
+    if len(package) != canonical_size or package[cursor:] != bytes(len(package) - cursor):
         raise PackageError("归档结束块或尾随字节错误")
     return tuple(extracted)  # type: ignore[return-value]
 
