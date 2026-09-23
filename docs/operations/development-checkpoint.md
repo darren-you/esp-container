@@ -13,7 +13,8 @@
 | 公开 `master@e27b5dc5cdb5979c7d83dc09833d21643604498c` 全新 checkout | 独立目录 `/tmp/esp-container-public-e27` 从 GitHub 克隆；Python 9/9、真实 WAMR host CTest 2/2、固定 SDK/C3 完整链接均通过；锁文件和下载组件 `.component_hash` 同为 `e7a23b...`，bin 227232 字节，SHA-256 `effcfec54778d734b2bd1b12a3242fdfeeccb7db6db184bca044e3879eb92f65` | 两次 C3 构建路径不同，SHA 不相等；不宣称逐字节可复现，也不以主机结果替代实板异常与堆峰值 |
 | `esp-container` 公开 `master@ae52a774857eb7839481f012dcff03c8a22d1e3f` 全新 checkout | Python 9 项、CTest 1 项通过；固定 SDK/C3 全部编译链接通过，bin 227168 字节、SHA-256 `99e05d6e7e544a7978a912f07a0862f0d0e60e514c456382cdfbeb39f890df00` | 与本机原 checkout 镜像尺寸相同；构建时间等非源码输入会改变摘要，未声明位级可复现；未写板 |
 | wasi-sdk 33 freestanding counter guest | 官方 macOS arm64 资产 SHA-256 `85c997a2665ead91673b5bb88b7d0df3fc8900df3bfa244f720d478187bbdc78`；`WASI_SDK_ROOT` 下 Python 13/13，counter 437 字节、SHA-256 `1896ae9ed2390bd4fb71af9d50965533a679245806c9c07675d65b81be42c91c`；两种输出路径字节相同，静态 ABI/profile 检查通过，锁定 WAMR 主机实际调用 init/event/stop 通过 | 只验证 counter 样例的编译、输出形状和主机 Classic 执行；无实板、宿主授权、句柄、包安装或完整 P6-04 结论 |
+| 五组件仓外 C3 容量原型 | [独立报告](five-component-capacity-probe.md)：固定五仓及 SDK/WAMR 提交的实际 ELF/map 保留 FRP TLS/Yamux、MQTT 发布订阅、OTA HTTPS 与 WAMR Classic 调用；RSA-3072 签名镜像 `0x121000`，官方分区工具验证两组 4 MiB 布局 | P6-03 未验收：Base 旧 MQTT 试验组件仍冲突；极限布局双 app 零余量且 512 KiB Wasm 打包超槽；留余量布局尚无真实业务包、动态 RAM、迁移和实板数据 |
 
 公开 fork 从官方 WAMR-2.4.4 精确提交直接修正三处源码：无 WASI 时不编译文件适配、明确包含 `<sys/stat.h>`、在 IDF 无可执行堆能力时拒绝执行映射并保留普通映射。构建保留 `CONFIG_ESP_SYSTEM_MEMPROT=y`，未定义虚假的 `MALLOC_CAP_EXEC`，也未修改固定 SDK 或 `managed_components`。本仓 manifest 与 `dependencies.lock` 已精确指向该公开提交；P6-02 的 C3 构建条件已具备，实际最小运行、指令额度异常和实板资源结果仍未验收。
 
-当前尚无 Flash 三包槽、设备流式验包、产品实例管理、真实签名包运行、C3 堆峰值和组合容量证据。主计划 P6-02 及后续运行、容量任务仍未验收。
+当前已有只读组合链接与分区几何证据，但仍无实际 Flash 三包槽、设备流式验包、产品实例管理、真实签名包运行、C3 堆峰值和分区迁移。主计划 P6-02 及后续运行、容量任务仍未验收。
