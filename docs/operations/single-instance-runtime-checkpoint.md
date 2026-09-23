@@ -16,8 +16,10 @@ ESP-IDF 调用方必须在**同一个由 `pthread_create` 创建的宿主线程*
 
 使用固定 wasi-sdk 33 生成真实 counter 与五个临时 guest，使用精确锁定的 WAMR Classic 源码运行 `ctest`，三项全部通过。`runtime_instance` 逐项覆盖 counter 事件计数、guest payload 读取、空事件负返回值、过大事件拒绝、guest 堆分配不足后恢复、单实例占用、错误 ABI、超过原始内存页上限、三个入口分别死循环触发精确指令额度异常、失败释放、重复 stop/close 与八轮关闭后重开。输出 Wasm 位于 CMake 构建目录，不进入 Git。
 
-固定 IDF `fff9895c82d744c7237be8847347bdd1b07c6643`、lwIP `2758df4cd3666b3b2a5b53830148379326425c0d`、WAMR `a34d721b630213f59fde0b40cebbb980903660e8` 的 C3 样例完整构建通过，新 `runtime.c` 被编译进组件 archive。原样样例只调用先前底层探针，其最终 ELF 不保留这个新 API。另在仓外复制的临时工程强制引用私有 `open`，完整链接通过，最终 ELF 的符号表保留 `open/init/on_event/stop/close` 和 WAMR `module_malloc`；这证明新 API 的 C3 链接链路，尚不能声称 C3 已实际执行单实例链路。临时工程和生成镜像不进入仓库。
+固定 IDF `fff9895c82d744c7237be8847347bdd1b07c6643`、lwIP `2758df4cd3666b3b2a5b53830148379326425c0d`、WAMR `a34d721b630213f59fde0b40cebbb980903660e8` 的 C3 样例完整构建通过，新 `runtime.c` 被编译进组件 archive。原样样例只调用先前底层探针，其最终 ELF 不保留这个新 API。另在仓外复制的临时工程强制引用私有 `open`，完整链接通过，最终 ELF 的符号表保留 `open/init/on_event/stop/close` 和 WAMR `module_malloc`；这项链接检查本身不证明实际执行。临时工程和生成镜像不进入仓库。
+
+随后在同一仓外工程 `/tmp/esp-container-single-instance-link-probe`（源于本仓 `4f70873f4460bfb1b7a3c6c2efe1067dc6040779`）的 `main` 临时嵌入本次 wasi-sdk 生成的 counter 与事件死循环 Wasm，并让同一个 `pthread_create` 宿主线程依次调用私有 API。固定 SDK 构建的 C3 仿真镜像为 236400 字节，SHA-256 `9cd51cf900ad41fd383c27720ddae5ba67052982a002b89dc3a376cfe266bcf3`。官方 Espressif `qemu-riscv32` 9.2.2 (`esp_develop_9.2.2_20260417`) 串口实际输出 `private-runtime counter=0/0/0/0 result=3 loop=0/0/8`：四个 0 依次是 counter 的 open/init/on_event/stop 成功，`result=3` 是三个事件字节后的 guest 计数；loop 的两个 0 是 open/init 成功，8 是 `ECONTAINER_RUNTIME_INSTRUCTION_LIMIT`。counter close 后同一线程重开 loop 并关闭，两次释放路径均返回。仿真还保留原样底层探针的正常返回和精确额度异常。日志位于仓外 `/tmp/esp-container-single-instance-qemu-official.log`，临时源码、Wasm 和镜像均不提交。
 
 ## 未闭合边界
 
-当前没有宿主能力授权、guest 句柄、异步回调、签名 `product.pkg` 设备验包、Flash 三槽、Base 装配与实例持久状态；指令计量也不能单独限制未来宿主函数内部的耗时。没有此 API 的 C3 真运行、动态 RAM 峰值、实板运行和掉电恢复证据。P6-04 与 P6-07 仍未验收。
+当前没有宿主能力授权、guest 句柄、异步回调、签名 `product.pkg` 设备验包、Flash 三槽、Base 装配与实例持久状态；指令计量也不能单独限制未来宿主函数内部的耗时。官方 QEMU 仿真不能代替真实 C3 设备及五组件组合的动态 RAM 峰值、实板运行和掉电恢复证据。P6-04 与 P6-07 仍未验收。
