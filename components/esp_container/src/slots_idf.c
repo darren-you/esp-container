@@ -21,9 +21,9 @@ static bool range_valid(const econtainer_slots_idf_provider_t *provider,
                         uint32_t offset_bytes, size_t size_bytes)
 {
     const esp_partition_t *partition = provider->package_partition;
-    return size_bytes > 0U && offset_bytes >= partition->address &&
-           (uint64_t)offset_bytes + size_bytes <=
-               (uint64_t)partition->address + partition->size;
+    return size_bytes > 0U && size_bytes <= partition->size &&
+           offset_bytes >= partition->address &&
+           offset_bytes - partition->address <= partition->size - size_bytes;
 }
 
 static bool provider_lock(void *context)

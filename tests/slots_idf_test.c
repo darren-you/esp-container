@@ -3,6 +3,7 @@
 
 #include <assert.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <string.h>
 
 enum { PACKAGE_BASE = 0x500000, PACKAGE_BYTES = 0x3000,
@@ -252,10 +253,13 @@ static void test_provider_io(void)
     assert(provider.io.flash_write(provider.io.context, PACKAGE_BASE, bytes, sizeof bytes));
     assert(!provider.io.flash_write(provider.io.context, PACKAGE_BASE + PACKAGE_BYTES, bytes, sizeof bytes));
     assert(!provider.io.flash_write(provider.io.context, PACKAGE_BASE + 1U, bytes, sizeof bytes));
+    assert(!provider.io.flash_write(provider.io.context, PACKAGE_BASE, bytes, SIZE_MAX));
+    assert(!provider.io.flash_write(provider.io.context, PACKAGE_BASE, bytes, SIZE_MAX - 3U));
     uint8_t observed[16] = {0};
     assert(provider.io.flash_read(provider.io.context, PACKAGE_BASE, observed, sizeof observed));
     assert(memcmp(observed, bytes, sizeof bytes) == 0);
     assert(!provider.io.flash_read(provider.io.context, NVS_BASE, observed, sizeof observed));
+    assert(!provider.io.flash_read(provider.io.context, PACKAGE_BASE, observed, SIZE_MAX));
     memset(blob, 0x55, sizeof blob);
     assert(provider.io.write_blob(provider.io.context, blob));
     assert(commits == 1 && opens == 1);
