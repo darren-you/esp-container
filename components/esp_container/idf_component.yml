@@ -1,7 +1,7 @@
 version: "0.1.0"
 description: "ESP32 product package and WebAssembly runtime integration under development"
-url: "https://github.com/darren-you/esp-container"
-repository: "https://github.com/darren-you/esp-container.git"
+url: "https://github.com/esp-space/esp-container"
+repository: "https://github.com/esp-space/esp-container.git"
 license: "Apache-2.0"
 dependencies:
   idf: "==6.1.0"
