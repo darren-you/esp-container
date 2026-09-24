@@ -78,8 +78,9 @@ bool econtainer_wasm_imported_capabilities(const uint8_t *wasm, size_t wasm_size
 /* These calls have one serialized owner. On ESP-IDF the owner must be a
  * pthread_create thread: WAMR's espidf os_self_thread uses pthread_self, which
  * asserts on a plain xTaskCreate FreeRTOS task. out must point to NULL on
- * entry. open makes its own writable Wasm copy and owns WAMR until close;
- * it never executes a guest entrypoint. */
+ * entry. open retains writable copies of the code and data sections and
+ * owns WAMR until close; the original input may be released after open.
+ * open never executes a guest entrypoint. */
 econtainer_runtime_result_t econtainer_runtime_open(const uint8_t *wasm,
                                                    size_t wasm_size_bytes,
                                                    const econtainer_runtime_limits_t *limits,

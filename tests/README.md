@@ -50,4 +50,6 @@ Python 测试使用每次生成的 RSA-3072 临时测试密钥，覆盖确定性
 
 C3 单页分支以固定 wasi-sdk 33 生成 64 KiB counter 与宿主 API guest，并构造结构正确的旧两页 counter 作为负例。主机打包、设备包槽回读静态扫描和私有运行期都拒绝两页 guest；旧清单的 128 KiB 内存限额也分别由主机及设备端拒绝。该回归只证明限额接线，不证明 FRP/TLS/MQTT 与 guest 同时运行。
 
+节装载回归把真实宿主导入及非空数据节 guest、373 KiB 自定义节填充 counter 放入只读 `mmap`，在 `open` 后立即 `munmap`，再调用 `init`、`on_event` 和 `stop`；前者还验证数据节提供的 `init`/`first` 日志。畸形节长度和 WAMR 拒绝的非法 UTF-8 自定义节均不能进入实例。填充 counter 只验证不再按 Wasm 总长度复制，不能代表相同大小的业务代码可在 C3 运行；真实代码节的 QEMU 容量边界见[单页 profile](../docs/operations/c3-low-memory-profile.md)。
+
 主机测试不能证明设备流式 Flash 读回、C3 运行时内存/期限、掉电恢复或真实 C3 组合。对应实板任务与阻塞在跨仓主计划 P6/P7 中记录。

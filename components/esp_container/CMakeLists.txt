@@ -16,8 +16,10 @@ if(NOT CMAKE_BUILD_EARLY_EXPANSION)
        WAMR_BUILD_LIB_PTHREAD OR WAMR_BUILD_MULTI_MODULE OR
        WAMR_BUILD_REF_TYPES OR WAMR_BUILD_SIMD OR
        WAMR_BUILD_BULK_MEMORY OR WAMR_BUILD_SHARED_MEMORY OR
-       WAMR_BUILD_JIT OR WAMR_BUILD_FAST_JIT)
-        message(FATAL_ERROR "ESP Container requires WAMR Classic/normal loader with instruction metering; AOT/Fast/WASI/pthread/multi-module/ref-types/SIMD/bulk/shared memory must be disabled. Use examples/c3-runtime/sdkconfig.defaults and its CMake profile before project()")
+       WAMR_BUILD_JIT OR WAMR_BUILD_FAST_JIT OR
+       WAMR_BUILD_DEBUG_INTERP OR WAMR_BUILD_CUSTOM_NAME_SECTION OR
+       WAMR_BUILD_LOAD_CUSTOM_SECTION)
+        message(FATAL_ERROR "ESP Container requires WAMR Classic/normal loader with instruction metering and no retained custom sections; AOT/Fast/WASI/pthread/multi-module/ref-types/SIMD/bulk/shared memory/debug must be disabled. Use examples/c3-runtime/sdkconfig.defaults and its CMake profile before project()")
     endif()
     idf_build_get_property(sdk_python PYTHON)
     idf_build_get_property(sdk_path IDF_PATH)

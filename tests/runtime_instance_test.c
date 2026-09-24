@@ -8,6 +8,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#ifndef _WIN32
+#include <sys/mman.h>
+#ifndef MAP_ANONYMOUS
+#define MAP_ANONYMOUS MAP_ANON
+#endif
+#endif
 #ifdef ECONTAINER_TEST_RESOURCE_STATS
 #include <malloc/malloc.h>
 #include <mach/mach.h>
@@ -128,7 +134,7 @@ static bool test_counter(const char *path)
     CHECK(econtainer_runtime_state(runtime) == ECONTAINER_RUNTIME_LOADED);
     CHECK(econtainer_runtime_open(bytes, length, &limits, &other) == ECONTAINER_RUNTIME_BUSY);
     CHECK(other == NULL);
-    memset(bytes, 0, length); /* WAMR must retain its own writable copy. */
+    memset(bytes, 0, length); /* WAMR must retain owned code/data after open. */
     free(bytes);
     CHECK(econtainer_runtime_init(runtime) == ECONTAINER_RUNTIME_OK);
     CHECK(econtainer_runtime_init(runtime) == ECONTAINER_RUNTIME_INVALID_STATE);
@@ -152,6 +158,136 @@ static bool test_counter(const char *path)
     econtainer_runtime_close(&runtime);
     return true;
 }
+
+#ifndef _WIN32
+static bool has_nonempty_data_section(const uint8_t *wasm, size_t size_bytes)
+{
+    size_t cursor = 8;
+    while (cursor < size_bytes) {
+        const uint8_t id = wasm[cursor++];
+        size_t body_size_bytes = 0;
+        unsigned shift = 0;
+        uint8_t byte = 0;
+        do {
+            if (cursor >= size_bytes || shift >= 35) return false;
+            byte = wasm[cursor++];
+            body_size_bytes |= (size_t)(byte & 0x7fU) << shift;
+            shift += 7;
+        } while ((byte & 0x80U) != 0);
+        if (body_size_bytes > size_bytes - cursor) return false;
+        if (id == 11) return body_size_bytes > 1;
+        cursor += body_size_bytes;
+    }
+    return false;
+}
+
+static bool test_readonly_data_and_import(const char *path)
+{
+    size_t wasm_size_bytes = 0;
+    uint8_t *wasm = read_file(path, &wasm_size_bytes);
+    CHECK(wasm != NULL && has_nonempty_data_section(wasm, wasm_size_bytes));
+    uint8_t *mapped = mmap(NULL, wasm_size_bytes, PROT_READ | PROT_WRITE,
+                           MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    CHECK(mapped != MAP_FAILED);
+    memcpy(mapped, wasm, wasm_size_bytes);
+    free(wasm);
+    CHECK(mprotect(mapped, wasm_size_bytes, PROT_READ) == 0);
+    econtainer_runtime_limits_t authorized = limits;
+    authorized.allowed_capabilities = ECONTAINER_CAP_MONOTONIC_TIME | ECONTAINER_CAP_LOG;
+    authorized.max_log_bytes = 16;
+    econtainer_runtime_t *runtime = NULL;
+    CHECK(econtainer_runtime_open(mapped, wasm_size_bytes, &authorized, &runtime) ==
+          ECONTAINER_RUNTIME_OK);
+    CHECK(munmap(mapped, wasm_size_bytes) == 0);
+    CHECK(econtainer_runtime_init(runtime) == ECONTAINER_RUNTIME_OK);
+    uint8_t log[16] = {0};
+    size_t log_size = 0;
+    CHECK(econtainer_runtime_take_log(runtime, log, sizeof log, &log_size) ==
+          ECONTAINER_RUNTIME_OK && log_size == 4 && memcmp(log, "init", 4) == 0);
+    const uint8_t event[] = {2};
+    int32_t result = -1;
+    CHECK(econtainer_runtime_on_event(runtime, event, sizeof event, &result) ==
+          ECONTAINER_RUNTIME_OK && result == -2);
+    CHECK(econtainer_runtime_take_log(runtime, log, sizeof log, &log_size) ==
+          ECONTAINER_RUNTIME_OK && log_size == 5 && memcmp(log, "first", 5) == 0);
+    CHECK(econtainer_runtime_stop(runtime) == ECONTAINER_RUNTIME_OK);
+    CHECK(econtainer_runtime_close(&runtime) == ECONTAINER_RUNTIME_OK);
+    return true;
+}
+
+static bool test_readonly_flash_sized_wasm(const char *path)
+{
+    size_t counter_size_bytes = 0;
+    uint8_t *counter = read_file(path, &counter_size_bytes);
+    CHECK(counter != NULL);
+    const size_t wasm_size_bytes = 373U * 1024U;
+    CHECK(counter_size_bytes + 12U < wasm_size_bytes);
+    uint8_t *mapped = mmap(NULL, wasm_size_bytes, PROT_READ | PROT_WRITE,
+                           MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    CHECK(mapped != MAP_FAILED);
+    memcpy(mapped, counter, counter_size_bytes);
+    free(counter);
+    /* A custom section fills the Flash geometry upper bound. WAMR ignores
+     * this section under the fixed Classic profile. */
+    const uint32_t body_size_bytes = (uint32_t)(wasm_size_bytes - counter_size_bytes - 4U);
+    size_t cursor = counter_size_bytes;
+    mapped[cursor++] = 0;
+    mapped[cursor++] = (uint8_t)((body_size_bytes & 0x7fU) | 0x80U);
+    mapped[cursor++] = (uint8_t)(((body_size_bytes >> 7) & 0x7fU) | 0x80U);
+    mapped[cursor++] = (uint8_t)(body_size_bytes >> 14);
+    mapped[cursor++] = 7;
+    memcpy(mapped + cursor, "padding", 7);
+    cursor += 7;
+    memset(mapped + cursor, 0, wasm_size_bytes - cursor);
+    CHECK(econtainer_wasm_check(mapped, wasm_size_bytes) == ECONTAINER_WASM_OK);
+    CHECK(mprotect(mapped, wasm_size_bytes, PROT_READ) == 0);
+    econtainer_runtime_t *runtime = NULL;
+#ifdef ECONTAINER_TEST_RESOURCE_STATS
+    resource_stats_t before = {0}, after = {0};
+    CHECK(sample_resources(&before));
+#endif
+    CHECK(econtainer_runtime_open(mapped, wasm_size_bytes, &limits, &runtime) ==
+          ECONTAINER_RUNTIME_OK);
+#ifdef ECONTAINER_TEST_RESOURCE_STATS
+    CHECK(sample_resources(&after));
+    fprintf(stderr, "373 KiB padded Wasm open malloc delta=%zu bytes\n",
+            after.malloc_bytes - before.malloc_bytes);
+#endif
+    CHECK(munmap(mapped, wasm_size_bytes) == 0);
+    CHECK(econtainer_runtime_init(runtime) == ECONTAINER_RUNTIME_OK);
+    int32_t result = -1;
+    const uint8_t event[] = {1, 2, 3};
+    CHECK(econtainer_runtime_on_event(runtime, event, sizeof event, &result) ==
+          ECONTAINER_RUNTIME_OK && result == 3);
+    CHECK(econtainer_runtime_stop(runtime) == ECONTAINER_RUNTIME_OK);
+    CHECK(econtainer_runtime_close(&runtime) == ECONTAINER_RUNTIME_OK);
+    return true;
+}
+
+static bool test_malformed_sections(const char *path)
+{
+    size_t wasm_size_bytes = 0;
+    uint8_t *counter = read_file(path, &wasm_size_bytes);
+    CHECK(counter != NULL);
+    uint8_t *bad = malloc(wasm_size_bytes + 4U);
+    CHECK(bad != NULL);
+    memcpy(bad, counter, wasm_size_bytes);
+    free(counter);
+    econtainer_runtime_t *runtime = NULL;
+    bad[wasm_size_bytes] = 0; /* custom section */
+    bad[wasm_size_bytes + 1] = 2; /* body length */
+    bad[wasm_size_bytes + 2] = 1; /* name length */
+    bad[wasm_size_bytes + 3] = 0xff; /* invalid UTF-8 */
+    CHECK(econtainer_wasm_check(bad, wasm_size_bytes + 4U) == ECONTAINER_WASM_OK);
+    CHECK(econtainer_runtime_open(bad, wasm_size_bytes + 4U, &limits, &runtime) ==
+          ECONTAINER_RUNTIME_BAD_WASM && runtime == NULL);
+    bad[wasm_size_bytes + 1] = 5; /* body exceeds available bytes */
+    CHECK(econtainer_runtime_open(bad, wasm_size_bytes + 4U, &limits, &runtime) ==
+          ECONTAINER_RUNTIME_BAD_WASM && runtime == NULL);
+    free(bad);
+    return true;
+}
+#endif
 
 static bool test_event_copy(const char *path)
 {
@@ -767,6 +903,11 @@ int main(int argc, char **argv)
 #endif
     const bool passed = test_timer_handle_boundary() &&
                         test_counter(argv[1]) && test_event_copy(argv[2]) &&
+#ifndef _WIN32
+                        test_readonly_data_and_import(argv[8]) &&
+                        test_readonly_flash_sized_wasm(argv[1]) &&
+                        test_malformed_sections(argv[1]) &&
+#endif
                         test_event_allocation_failure(argv[2]) &&
                         test_loop(argv[3], 0) && test_loop(argv[4], 1) &&
                         test_loop(argv[5], 2) &&

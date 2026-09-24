@@ -7,6 +7,11 @@
 #include "esp_container.h"
 #include "wasm_export.h"
 
+#if WASM_ENABLE_FAST_INTERP != 0 || WASM_ENABLE_CUSTOM_NAME_SECTION != 0 || \
+    WASM_ENABLE_LOAD_CUSTOM_SECTION != 0 || WASM_ENABLE_DEBUG_INTERP != 0
+#error "Container section loader requires Classic bytecode and no retained custom sections"
+#endif
+
 #include <stdbool.h>
 #include <stdatomic.h>
 #include <stdlib.h>
@@ -31,7 +36,8 @@ typedef struct {
 struct econtainer_runtime {
     econtainer_runtime_limits_t limits;
     econtainer_runtime_state_t state;
-    uint8_t *wasm_copy;
+    uint8_t *code_copy;
+    uint8_t *data_copy;
     wasm_module_t module;
     wasm_module_inst_t instance;
     wasm_exec_env_t environment;
@@ -164,7 +170,8 @@ static void release_runtime(econtainer_runtime_t *runtime)
         wasm_runtime_unregister_natives("econtainer", runtime->native_symbols);
     }
     free(runtime->pending_log);
-    free(runtime->wasm_copy);
+    free(runtime->code_copy);
+    free(runtime->data_copy);
     if (runtime->wamr_initialized) {
         wasm_runtime_destroy();
     }
@@ -310,6 +317,82 @@ static uint64_t native_timer_start(wasm_exec_env_t environment,
     return handle;
 }
 
+static bool read_section_size(const uint8_t *wasm, size_t wasm_size_bytes,
+                              size_t *cursor, uint32_t *size_bytes)
+{
+    uint32_t value = 0;
+    for (unsigned shift = 0; shift < 35; shift += 7) {
+        if (*cursor >= wasm_size_bytes) return false;
+        const uint8_t byte = wasm[(*cursor)++];
+        if (shift == 28 && (byte & 0xf0U) != 0) return false;
+        value |= (uint32_t)(byte & 0x7fU) << shift;
+        if ((byte & 0x80U) == 0) {
+            *size_bytes = value;
+            return true;
+        }
+    }
+    return false;
+}
+
+/* The exact Classic loader copies names when given a section list. It keeps
+ * function code and active data by pointer, so only those bodies need owned,
+ * writable storage after this call. All other bodies are read during load.
+ * The caller's original Wasm can be read-only and released after open. */
+static econtainer_runtime_result_t prepare_sections(
+    const uint8_t *wasm, size_t wasm_size_bytes, econtainer_runtime_t *runtime,
+    wasm_section_t **out_sections)
+{
+    size_t section_count = 0;
+    size_t cursor = 8;
+    while (cursor < wasm_size_bytes) {
+        ++cursor; /* section id, already checked by the module scanner */
+        uint32_t body_size_bytes = 0;
+        if (!read_section_size(wasm, wasm_size_bytes, &cursor, &body_size_bytes) ||
+            body_size_bytes > wasm_size_bytes - cursor) {
+            return ECONTAINER_RUNTIME_BAD_WASM;
+        }
+        cursor += body_size_bytes;
+        ++section_count;
+    }
+    if (section_count == 0 || section_count > SIZE_MAX / sizeof(wasm_section_t)) {
+        return ECONTAINER_RUNTIME_BAD_WASM;
+    }
+    wasm_section_t *sections = calloc(section_count, sizeof(*sections));
+    if (sections == NULL) return ECONTAINER_RUNTIME_NO_MEMORY;
+    cursor = 8;
+    for (size_t index = 0; index < section_count; ++index) {
+        const uint8_t section_id = wasm[cursor++];
+        uint32_t body_size_bytes = 0;
+        if (!read_section_size(wasm, wasm_size_bytes, &cursor, &body_size_bytes) ||
+            body_size_bytes > wasm_size_bytes - cursor) {
+            free(sections);
+            return ECONTAINER_RUNTIME_BAD_WASM;
+        }
+        sections[index].section_type = section_id;
+        sections[index].section_body = (uint8_t *)(wasm + cursor);
+        sections[index].section_body_size = body_size_bytes;
+        sections[index].next = index + 1 < section_count ? &sections[index + 1] : NULL;
+        if ((section_id == 10 || section_id == 11) && body_size_bytes > 0) {
+            uint8_t **owned = section_id == 10 ? &runtime->code_copy :
+                                                &runtime->data_copy;
+            if (*owned != NULL) {
+                free(sections);
+                return ECONTAINER_RUNTIME_BAD_WASM;
+            }
+            *owned = malloc(body_size_bytes);
+            if (*owned == NULL) {
+                free(sections);
+                return ECONTAINER_RUNTIME_NO_MEMORY;
+            }
+            memcpy(*owned, wasm + cursor, body_size_bytes);
+            sections[index].section_body = *owned;
+        }
+        cursor += body_size_bytes;
+    }
+    *out_sections = sections;
+    return ECONTAINER_RUNTIME_OK;
+}
+
 static int32_t native_timer_cancel(wasm_exec_env_t environment, uint64_t handle)
 {
     econtainer_runtime_t *runtime = native_owner(environment);
@@ -372,13 +455,15 @@ econtainer_runtime_result_t econtainer_runtime_open(const uint8_t *wasm,
             return ECONTAINER_RUNTIME_NO_MEMORY;
         }
     }
-    runtime->wasm_copy = malloc(wasm_size_bytes);
-    if (runtime->wasm_copy == NULL) {
+    wasm_section_t *sections = NULL;
+    const econtainer_runtime_result_t section_result =
+        prepare_sections(wasm, wasm_size_bytes, runtime, &sections);
+    if (section_result != ECONTAINER_RUNTIME_OK) {
         release_runtime(runtime);
-        return ECONTAINER_RUNTIME_NO_MEMORY;
+        return section_result;
     }
-    memcpy(runtime->wasm_copy, wasm, wasm_size_bytes);
     if (!wasm_runtime_init()) {
+        free(sections);
         release_runtime(runtime);
         return ECONTAINER_RUNTIME_ENGINE_FAILURE;
     }
@@ -404,14 +489,16 @@ econtainer_runtime_result_t econtainer_runtime_open(const uint8_t *wasm,
     if (runtime->native_count != 0) {
         if (!wasm_runtime_register_natives("econtainer", runtime->native_symbols,
                                            runtime->native_count)) {
+            free(sections);
             release_runtime(runtime);
             return ECONTAINER_RUNTIME_ENGINE_FAILURE;
         }
         runtime->natives_registered = true;
     }
     char error[128] = {0};
-    runtime->module = wasm_runtime_load(runtime->wasm_copy, (uint32_t)wasm_size_bytes,
-                                        error, sizeof(error));
+    runtime->module = wasm_runtime_load_from_sections(sections, false,
+                                                      error, sizeof(error));
+    free(sections);
     if (runtime->module == NULL) {
         release_runtime(runtime);
         return ECONTAINER_RUNTIME_BAD_WASM;
