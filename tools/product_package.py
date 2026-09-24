@@ -25,6 +25,8 @@ MANIFEST_MAX_BYTES = 4096
 SIGNATURE_BYTES = 384
 DEVICE_MAX_WASM_BYTES = 512 * 1024  # Device scanner bound; C3 slot capacity needs P6-03.
 DEVICE_MEMORY_BYTES = 65536  # C3 single-page guest profile; includes signed limit.
+GUEST_ABI_VERSION = 2
+EVENT_BUFFER_BYTES = 4096
 DEFAULT_MAX_WASM_BYTES = DEVICE_MAX_WASM_BYTES
 IDENTIFIER = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
@@ -151,6 +153,23 @@ class _WasmReader:
     def byte(self) -> int:
         return self.take(1)[0]
 
+    def signed_const(self, bits: int) -> int:
+        value = 0
+        count = (bits + 6) // 7
+        for index in range(count):
+            octet = self.byte()
+            shift = index * 7
+            if index == count - 1:
+                mask = (0x7f << (bits - shift - 1)) & 0x7f
+                if octet & mask not in (0, mask):
+                    raise PackageError("Wasm 有符号整数溢出")
+            value |= (octet & 0x7f) << shift
+            if not octet & 0x80:
+                if octet & 0x40:
+                    value |= -1 << (shift + 7)
+                return value
+        raise PackageError("Wasm 有符号整数溢出")
+
     def name(self) -> bytes:
         return self.take(self.u32())
 
@@ -220,14 +239,14 @@ def _wasm_functions(data: bytes, type_count: int) -> list[int]:
     return functions
 
 
-def _wasm_exports(data: bytes) -> tuple[int, int, int]:
+def _wasm_exports(data: bytes) -> tuple[tuple[int, int, int], int]:
     reader = _WasmReader(data)
-    if reader.u32() != 4:
+    if reader.u32() != 5:
         raise PackageError("Wasm 导出集合与 ABI 不符")
     expected = {b"econtainer_init": 0, b"econtainer_on_event": 0,
-                b"econtainer_stop": 0, b"memory": 2}
+                b"econtainer_stop": 0, b"memory": 2, b"econtainer_event_buffer": 3}
     exports: dict[bytes, int] = {}
-    for _ in range(4):
+    for _ in range(5):
         name = reader.name()
         kind = reader.byte()
         index = reader.u32()
@@ -238,8 +257,32 @@ def _wasm_exports(data: bytes) -> tuple[int, int, int]:
     reader.finish()
     if set(exports) != set(expected):
         raise PackageError("Wasm 导出集合与 ABI 不符")
-    return (exports[b"econtainer_init"], exports[b"econtainer_on_event"],
-            exports[b"econtainer_stop"])
+    return ((exports[b"econtainer_init"], exports[b"econtainer_on_event"],
+             exports[b"econtainer_stop"]), exports[b"econtainer_event_buffer"])
+
+
+def _wasm_event_buffer(data: bytes, wanted: int) -> None:
+    reader = _WasmReader(data)
+    count = reader.u32()
+    if wanted >= count or count > len(data) - reader.offset:
+        raise PackageError("Wasm 事件 buffer global 索引越界")
+    for index in range(count):
+        kind, mutable, opcode = reader.byte(), reader.byte(), reader.byte()
+        if mutable not in (0, 1):
+            raise PackageError("Wasm global 可变性非法")
+        if (kind, opcode) in ((0x7f, 0x41), (0x7e, 0x42)):
+            value = reader.signed_const(32 if kind == 0x7f else 64)
+        elif (kind, opcode) in ((0x7d, 0x43), (0x7c, 0x44)):
+            reader.take(4 if kind == 0x7d else 8)
+            value = 0
+        else:
+            raise PackageError("不允许的 Wasm global 初值表达式")
+        if reader.byte() != 0x0b:
+            raise PackageError("Wasm global 初值表达式未结束")
+        if index == wanted and (kind != 0x7f or mutable != 0 or
+                                not 0 < value <= DEVICE_MEMORY_BYTES - EVENT_BUFFER_BYTES):
+            raise PackageError("Wasm 事件 buffer 必须为页内不可变 i32 地址")
+    reader.finish()
 
 
 def _wasm_memory(data: bytes, max_memory_bytes: int) -> None:
@@ -285,12 +328,13 @@ def _wasm(data: bytes, *, max_memory_bytes: int = 0xffffffff) -> frozenset[str]:
             raise PackageError("Wasm section 重复或乱序")
         sections[section] = content
         last_section = section
-    if not {1, 3, 5, 7, 10}.issubset(sections):
+    if not {1, 3, 5, 6, 7, 10}.issubset(sections):
         raise PackageError("Wasm 缺少设备 ABI 必需 section")
     types = _wasm_types(sections[1])
     required, imported_count = _wasm_imports(types, sections.get(2))
     functions = _wasm_functions(sections[3], len(types))
-    exports = _wasm_exports(sections[7])
+    exports, event_buffer = _wasm_exports(sections[7])
+    _wasm_event_buffer(sections[6], event_buffer)
     if len(set(exports)) != 3:
         raise PackageError("Wasm 三个入口不能复用同一个函数")
     signatures = ((b"", b"\x7f"), (b"\x7f\x7f", b"\x7f"), (b"", b"\x7f"))
@@ -304,7 +348,7 @@ def _wasm(data: bytes, *, max_memory_bytes: int = 0xffffffff) -> frozenset[str]:
 
 
 def _check_declared_capabilities(wasm: bytes, record: dict[str, object]) -> None:
-    if record["guest_abi_version"] != 1 or record["runtime_profile"] != "wamr-classic-v1":
+    if record["guest_abi_version"] != GUEST_ABI_VERSION or record["runtime_profile"] != "wamr-classic-v1":
         raise PackageError("不支持的 Wasm ABI 或运行 profile")
     if not set(record["required_capabilities"]).issubset({"monotonic-time", "log", "timer"}):
         raise PackageError("不支持的 Wasm 能力声明")

@@ -62,8 +62,11 @@ def main() -> int:
         if symbol is not None:
             command.append(f"-D{symbol}")
         command += [
+            "-I", str(ROOT / "guest-sdk" / "include"),
             str(ROOT / "tests" / "runtime_guest.c"),
+            str(ROOT / "guest-sdk" / "src" / "econtainer_guest.c"),
             "-Wl,--no-entry",
+            "-Wl,--export=econtainer_event_buffer",
             *(f"-Wl,--export={export}" for export in counter_guest.EXPORT_TYPES),
             f"-Wl,--initial-memory={counter_guest.MEMORY_PAGES * counter_guest.PAGE_BYTES}",
             f"-Wl,--max-memory={counter_guest.MEMORY_PAGES * counter_guest.PAGE_BYTES}",
@@ -78,7 +81,9 @@ def main() -> int:
         *(f"-mno-{feature}" for feature in counter_guest.FEATURES_OFF),
         "-I", str(ROOT / "guest-sdk" / "include"),
         str(ROOT / "tests" / "host_api_guest.c"),
+        str(ROOT / "guest-sdk" / "src" / "econtainer_guest.c"),
         "-Wl,--no-entry", "-Wl,--allow-undefined",
+        "-Wl,--export=econtainer_event_buffer",
         *(f"-Wl,--export={export}" for export in counter_guest.EXPORT_TYPES),
         f"-Wl,--initial-memory={counter_guest.MEMORY_PAGES * counter_guest.PAGE_BYTES}",
         f"-Wl,--max-memory={counter_guest.MEMORY_PAGES * counter_guest.PAGE_BYTES}",
@@ -98,6 +103,12 @@ def main() -> int:
     )
     deadline_command[-1] = str(args.output_dir / "deadline.wasm")
     subprocess.run(deadline_command, check=True)
+    memory_command = host_command.copy()
+    memory_command[memory_command.index(str(ROOT / "tests" / "host_api_guest.c"))] = str(
+        ROOT / "tests" / "memory_guest.c"
+    )
+    memory_command[-1] = str(args.output_dir / "memory.wasm")
+    subprocess.run(memory_command, check=True)
     return 0
 
 

@@ -4,6 +4,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#define ECONTAINER_GUEST_ABI_VERSION 2U
+#define ECONTAINER_EVENT_BUFFER_BYTES 4096U
+
 #ifdef __cplusplus
 extern "C" {
 #endif

@@ -83,6 +83,9 @@ def main() -> None:
         assert pkg._wasm(none) == frozenset()
         pkg.create_manifest(SPEC, none)
         run(none)
+        # ABI 2 accepts the last complete 4 KiB region and valid padded LEB.
+        run(module(buffer_global=b"\x7f\0\x41\x80\xe0\x03\x0b"))
+        run(module(buffer_global=b"\x7f\0\x41\x80\x88\x80\x80\0\x0b"))
         large_custom = module(extra=section(0, name("name") + bytes(65536)))
         assert pkg._wasm(large_custom) == frozenset()
         run(large_custom)
@@ -153,7 +156,7 @@ def main() -> None:
             pass
         run(none, unknown_spec, expected=2)
         bad_abi = copy.deepcopy(SPEC)
-        bad_abi["guest_abi_version"] = 2
+        bad_abi["guest_abi_version"] = 1
         try:
             pkg.create_manifest(bad_abi, none)
             raise AssertionError("host accepted a device-unsupported ABI")
@@ -183,6 +186,14 @@ def main() -> None:
             ("entry_signature", module(event_type=0), 1),
             ("code_count", module(code_count=2), 1),
             ("old_two_page_guest", module(memory_pages=2, memory_max=2), 1),
+            ("old_four_exports", module(export_buffer=False), 2),
+            ("buffer_index", module(buffer_index=1), 1),
+            ("buffer_mutable", module(buffer_global=b"\x7f\x01\x41\x80\x08\x0b"), 1),
+            ("buffer_i64", module(buffer_global=b"\x7e\0\x42\x80\x08\x0b"), 1),
+            ("buffer_null", module(buffer_global=b"\x7f\0\x41\0\x0b"), 1),
+            ("buffer_negative", module(buffer_global=b"\x7f\0\x41\x7f\x0b"), 1),
+            ("buffer_cross_page", module(buffer_global=b"\x7f\0\x41\x81\xe0\x03\x0b"), 1),
+            ("buffer_overflow_leb", module(buffer_global=b"\x7f\0\x41\x80\x80\x80\x80\x08\x0b"), 1),
         )
         for label, wasm, result in deterministic_rejections:
             try:

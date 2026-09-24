@@ -22,7 +22,7 @@ WASM = module()
 SPEC = {
     "product_id": "counter",
     "product_version": "v0-1-0",
-    "guest_abi_version": 1,
+    "guest_abi_version": 2,
     "required_capabilities": [],
     "runtime_profile": "wamr-classic-v1",
     "limits": {
@@ -92,10 +92,10 @@ class ProductPackageTest(unittest.TestCase):
         package = pkg.pack(manifest, signature, WASM, max_wasm_bytes=1024)
         self.assertEqual(len(manifest), 546)
         self.assertEqual(hashlib.sha256(manifest).hexdigest(),
-                         "e171dcdd96587b2ebe31bd18a7c83b13fc764b9eeb37ed46c763d4fc7df6bd5e")
+                         "c64145a7caf097fc29451a8616daa8ad56ff738a9134a5e3d76d4dbe971153d4")
         self.assertEqual(len(package), 10240)
         self.assertEqual(hashlib.sha256(package).hexdigest(),
-                         "8030e8209753cf24fe16581483dd9c590ab6260282bed4fa59b4f348afb7c562")
+                         "8ef5cd8d34db16c5d8919412cbd6c69c0468d696b5a61726f1eb746768e2d71a")
         self.assertEqual(pkg.unpack(package, max_wasm_bytes=1024),
                          (manifest, signature, WASM))
 

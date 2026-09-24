@@ -118,7 +118,7 @@ static bool fake_flash_read(void *context, uint32_t offset_bytes,
             1U + (offset_bytes - FLASH_BASE) / SLOT_BYTES) {
         return false;
     }
-    memcpy(destination, store->flash + offset_bytes - FLASH_BASE, size_bytes);
+    memcpy(destination, store->flash + (offset_bytes - FLASH_BASE), size_bytes);
     return true;
 }
 
@@ -132,7 +132,7 @@ static bool fake_flash_erase(void *context, uint32_t offset_bytes,
         return false;
     }
     ++store->erase_count[(offset_bytes - FLASH_BASE) / SLOT_BYTES];
-    memset(store->flash + offset_bytes - FLASH_BASE, 0xff, size_bytes);
+    memset(store->flash + (offset_bytes - FLASH_BASE), 0xff, size_bytes);
     return true;
 }
 
@@ -252,7 +252,7 @@ static econtainer_slot_binding_t binding(uint8_t firmware_seed, uint8_t slot,
         result.package_present = true;
         result.slot = slot;
         result.package_size_bytes = (uint32_t)package->length;
-        result.guest_abi_version = 1;
+        result.guest_abi_version = 2;
         result.data_schema_version = 1;
         digest_fixture(package, result.package_sha256);
     }
@@ -267,7 +267,7 @@ static econtainer_slot_operation_t operation(uint8_t id, uint8_t firmware_seed,
     memset(result.target_firmware_sha256, firmware_seed, 32);
     digest_fixture(package, result.package_sha256);
     result.package_size_bytes = (uint32_t)package->length;
-    result.guest_abi_version = 1;
+    result.guest_abi_version = 2;
     result.data_schema_version = 1;
     return result;
 }

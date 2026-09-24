@@ -1,7 +1,7 @@
 {
   "product_id": "counter",
   "product_version": "v0-1-0",
-  "guest_abi_version": 1,
+  "guest_abi_version": 2,
   "required_capabilities": [],
   "runtime_profile": "wamr-classic-v1",
   "limits": {

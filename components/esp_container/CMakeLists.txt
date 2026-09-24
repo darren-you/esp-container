@@ -1,4 +1,4 @@
-idf_component_register(SRCS "src/wasm_scan.c" "src/package_wasm.c" "src/runtime.c"
+idf_component_register(SRCS "src/wasm_scan.c" "src/package_wasm.c" "src/runtime.c" "src/slot_runtime.c"
     "src/package_stream.c" "src/package_slot.c" "src/package_crypto.c" "src/slots.c" "src/slots_idf.c"
     INCLUDE_DIRS "include" PRIV_INCLUDE_DIRS "src"
     REQUIRES esp_partition freertos
@@ -18,8 +18,9 @@ if(NOT CMAKE_BUILD_EARLY_EXPANSION)
        WAMR_BUILD_BULK_MEMORY OR WAMR_BUILD_SHARED_MEMORY OR
        WAMR_BUILD_JIT OR WAMR_BUILD_FAST_JIT OR
        WAMR_BUILD_DEBUG_INTERP OR WAMR_BUILD_CUSTOM_NAME_SECTION OR
-       WAMR_BUILD_LOAD_CUSTOM_SECTION)
-        message(FATAL_ERROR "ESP Container requires WAMR Classic/normal loader with instruction metering and no retained custom sections; AOT/Fast/WASI/pthread/multi-module/ref-types/SIMD/bulk/shared memory/debug must be disabled. Use examples/c3-runtime/sdkconfig.defaults and its CMake profile before project()")
+       WAMR_BUILD_LOAD_CUSTOM_SECTION OR
+       NOT DEFINED WAMR_BUILD_SHRUNK_MEMORY OR WAMR_BUILD_SHRUNK_MEMORY)
+        message(FATAL_ERROR "ESP Container requires WAMR Classic/normal loader with instruction metering and no retained custom sections; AOT/Fast/WASI/pthread/multi-module/ref-types/SIMD/bulk/shared memory/debug and shrunk memory must be disabled. Use examples/c3-runtime/sdkconfig.defaults and its CMake profile before project()")
     endif()
     idf_build_get_property(sdk_python PYTHON)
     idf_build_get_property(sdk_path IDF_PATH)

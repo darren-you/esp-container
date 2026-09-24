@@ -1,4 +1,5 @@
 #include "esp_container_slots.h"
+#include "slots_internal.h"
 
 #include "package_crypto.h"
 
@@ -500,6 +501,79 @@ static econtainer_slots_result_t begin_locked(const econtainer_slots_io_t *io,
         return result;
     }
     return current->sequence == expected_sequence ? ECONTAINER_SLOTS_OK : ECONTAINER_SLOTS_CONFLICT;
+}
+
+econtainer_slots_result_t econtainer_slots_with_selected_package(
+    const econtainer_slots_io_t *io, const econtainer_slots_geometry_t *geometry,
+    const econtainer_slot_selection_request_t *request,
+    econtainer_slot_selected_fn selected_fn, void *context)
+{
+    if (!io_valid(io) || !econtainer_slots_geometry_valid(geometry) ||
+        request == NULL || !firmware_set_valid(&request->firmware_set) ||
+        selected_fn == NULL ||
+        (request->selection != ECONTAINER_SLOT_SELECT_CONFIRMED &&
+         request->selection != ECONTAINER_SLOT_SELECT_TRIAL)) {
+        return ECONTAINER_SLOTS_INVALID;
+    }
+    const bool trial = request->selection == ECONTAINER_SLOT_SELECT_TRIAL;
+    if (trial ? (all_zero(request->operation_id, sizeof(request->operation_id)) ||
+                 all_zero(request->boot_id, sizeof(request->boot_id)))
+              : (!all_zero(request->operation_id, sizeof(request->operation_id)) ||
+                 !all_zero(request->boot_id, sizeof(request->boot_id)))) {
+        return ECONTAINER_SLOTS_INVALID;
+    }
+    if (!io->lock(io->context)) return ECONTAINER_SLOTS_BUSY;
+    econtainer_slots_state_t current;
+    econtainer_slots_result_t result = begin_locked(io, geometry,
+                                                     request->expected_sequence, &current);
+    econtainer_slot_package_t package = {0};
+    if (result == ECONTAINER_SLOTS_OK &&
+        !firmware_set_matches(&current, &request->firmware_set)) {
+        result = ECONTAINER_SLOTS_CONFLICT;
+    }
+    if (result == ECONTAINER_SLOTS_OK && trial) {
+        const econtainer_slot_operation_t *operation = &current.operation;
+        if (current.phase != ECONTAINER_SLOT_TRIAL_STARTED ||
+            memcmp(operation->target_firmware_sha256,
+                   request->firmware_set.running_firmware_sha256, 32) != 0 ||
+            memcmp(operation->operation_id, request->operation_id,
+                   sizeof(request->operation_id)) != 0 ||
+            memcmp(operation->trial_boot_id, request->boot_id, sizeof(request->boot_id)) != 0) {
+            result = ECONTAINER_SLOTS_CONFLICT;
+        } else {
+            package.slot = operation->slot;
+            memcpy(package.package_sha256, operation->package_sha256, 32);
+            package.package_size_bytes = operation->package_size_bytes;
+            package.guest_abi_version = operation->guest_abi_version;
+            package.data_schema_version = operation->data_schema_version;
+        }
+    } else if (result == ECONTAINER_SLOTS_OK) {
+        const int index = binding_for_firmware(&current,
+            request->firmware_set.running_firmware_sha256);
+        if (index < 0) {
+            result = ECONTAINER_SLOTS_CONFLICT;
+        } else {
+            const econtainer_slot_binding_t *binding = &current.bindings[index];
+            if (!binding->package_present) {
+                result = ECONTAINER_SLOTS_EMPTY;
+            } else {
+                package.slot = binding->slot;
+                memcpy(package.package_sha256, binding->package_sha256, 32);
+                package.package_size_bytes = binding->package_size_bytes;
+                package.guest_abi_version = binding->guest_abi_version;
+                package.data_schema_version = binding->data_schema_version;
+            }
+        }
+    }
+    /* Keep both bootable firmware references protected. An invalid pending
+     * candidate must not prevent recovery of the separately verified confirmed
+     * package. The selected callback verifies the selected package completely. */
+    if (result == ECONTAINER_SLOTS_OK) result = check_references(io, geometry, &current, false);
+    if (result == ECONTAINER_SLOTS_OK) {
+        result = selected_fn(context, &package, geometry->slots[package.slot].offset_bytes);
+    }
+    io->unlock(io->context);
+    return result;
 }
 
 econtainer_slots_result_t econtainer_slots_initialize(

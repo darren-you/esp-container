@@ -28,6 +28,7 @@ typedef struct {
     uint32_t defined_count;
     uint32_t imported_count;
     uint32_t imported_capabilities;
+    uint32_t event_buffer_global;
 } wasm_abi_t;
 
 static bool byte_at(wasm_reader_t *reader, size_t offset, uint8_t *value)
@@ -79,6 +80,62 @@ static bool next_u32(wasm_reader_t *reader, size_t end, size_t *cursor, uint32_t
         }
     }
     return false;
+}
+
+/* Signed const immediates accept valid padded LEB, as the Wasm decoder does. */
+static bool next_signed_const(wasm_reader_t *reader, size_t end, size_t *cursor,
+                              unsigned bits, uint32_t *low_bits)
+{
+    uint32_t value = 0;
+    const unsigned count = (bits + 6U) / 7U;
+    for (unsigned index = 0; index < count; ++index) {
+        uint8_t octet = 0;
+        if (!next_byte(reader, end, cursor, &octet)) return false;
+        const unsigned shift = index * 7U;
+        if (index == count - 1U) {
+            const unsigned remaining = bits - shift;
+            const uint8_t mask = (uint8_t)((0x7fU << (remaining - 1U)) & 0x7fU);
+            if ((octet & mask) != 0 && (octet & mask) != mask) return false;
+        }
+        if (shift < 32U) value |= (uint32_t)(octet & 0x7fU) << shift;
+        if ((octet & 0x80U) == 0) {
+            if (shift + 7U < 32U && (octet & 0x40U) != 0)
+                value |= UINT32_MAX << (shift + 7U);
+            *low_bits = value;
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool scan_event_buffer(wasm_reader_t *reader, wasm_section_t section,
+                               uint32_t wanted)
+{
+    size_t cursor = section.begin;
+    uint32_t count = 0;
+    if (!section.present || !next_u32(reader, section.end, &cursor, &count) ||
+        wanted >= count || count > section.end - cursor) return false;
+    for (uint32_t index = 0; index < count; ++index) {
+        uint8_t type = 0, mutable = 0, opcode = 0, end = 0;
+        uint32_t value = 0;
+        if (!next_byte(reader, section.end, &cursor, &type) ||
+            !next_byte(reader, section.end, &cursor, &mutable) || mutable > 1 ||
+            !next_byte(reader, section.end, &cursor, &opcode)) return false;
+        if ((type == 0x7f && opcode == 0x41) ||
+            (type == 0x7e && opcode == 0x42)) {
+            if (!next_signed_const(reader, section.end, &cursor,
+                                    type == 0x7f ? 32U : 64U, &value)) return false;
+        } else if ((type == 0x7d && opcode == 0x43) ||
+                   (type == 0x7c && opcode == 0x44)) {
+            const size_t size = type == 0x7d ? 4U : 8U;
+            if (size > section.end - cursor) return false;
+            cursor += size;
+        } else return false;
+        if (!next_byte(reader, section.end, &cursor, &end) || end != 0x0b) return false;
+        if (index == wanted && (type != 0x7f || mutable != 0 || value == 0 ||
+            value > WASM_PAGE_BYTES - ECONTAINER_EVENT_BUFFER_BYTES)) return false;
+    }
+    return cursor == section.end;
 }
 
 static bool name_is(wasm_reader_t *reader, size_t end, size_t *cursor,
@@ -308,7 +365,7 @@ static bool scan_exports(wasm_reader_t *reader, wasm_section_t section,
     if (!next_u32(reader, section.end, &cursor, &count)) {
         return false;
     }
-    if (count != 4) {
+    if (count != 5) {
         *unsupported = true;
         return true;
     }
@@ -321,9 +378,10 @@ static bool scan_exports(wasm_reader_t *reader, wasm_section_t section,
         }
         static const char *const names[] = {
             "econtainer_init", "econtainer_on_event", "econtainer_stop", "memory",
+            "econtainer_event_buffer",
         };
         int target = -1;
-        for (int item = 0; item < 4; ++item) {
+        for (int item = 0; item < 5; ++item) {
             if (length != strlen(names[item])) {
                 continue;
             }
@@ -350,16 +408,19 @@ static bool scan_exports(wasm_reader_t *reader, wasm_section_t section,
             return false;
         }
         if (target < 0 || (found & (1U << target)) != 0 ||
-            kind != (target == 3 ? 2 : 0) || (target == 3 && wasm_index != 0)) {
+            kind != (target == 4 ? 3 : target == 3 ? 2 : 0) ||
+            (target == 3 && wasm_index != 0)) {
             *unsupported = true;
             return true;
         }
         found |= 1U << target;
         if (target < 3) {
             abi->functions[target] = wasm_index;
+        } else if (target == 4) {
+            abi->event_buffer_global = wasm_index;
         }
     }
-    return cursor == section.end && found == 15;
+    return cursor == section.end && found == 31;
 }
 
 static bool function_type(wasm_reader_t *reader, wasm_section_t section,
@@ -477,7 +538,7 @@ econtainer_package_wasm_result_t econtainer_package_wasm_check(
         authorization->max_stack_bytes == 0) {
         return ECONTAINER_PACKAGE_WASM_INVALID;
     }
-    if (verified_info->guest_abi_version != 1 || !verified_info->is_classic_profile ||
+    if (verified_info->guest_abi_version != ECONTAINER_GUEST_ABI_VERSION || !verified_info->is_classic_profile ||
         verified_info->has_unknown_capability) {
         return ECONTAINER_PACKAGE_WASM_UNSUPPORTED;
     }
@@ -545,6 +606,7 @@ econtainer_package_wasm_result_t econtainer_package_wasm_check(
         abi.defined_count = defined_count;
     }
     if (!scan_memory(&reader, sections[5], verified_info->memory_limit_bytes) ||
+        !scan_event_buffer(&reader, sections[6], abi.event_buffer_global) ||
         !scan_code(&reader, sections[10], abi.defined_count)) {
         return reader.read_failed ? ECONTAINER_PACKAGE_WASM_READ_FAILED
                                   : ECONTAINER_PACKAGE_WASM_INVALID;

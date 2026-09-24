@@ -1,6 +1,6 @@
 # ESP Container
 
-`esp-container` 是面向 ESP-IDF 的业务包运行组件。当前提供独立 `esp_container` IDF 组件、受限 Wasm 扫描器、counter guest 的固定 freestanding 构建与静态检查、公开 guest SDK 草案、确定性 ustar 打包与 RSA-3072/PSS 验包工具、只读回调式设备验包及 Wasm ABI/能力检查切片、三槽原始 Flash 存储软件切片、双固件集合对账、精确分区前置的 ESP-IDF Flash/NVS provider，以及组件私有的 WAMR Classic 单实例运行切片。三槽候选的回读验证现在可组合签名包、Wasm 与独立产品/配额授权；该私有运行切片增加逐项授权的单调时间、有界日志和受配额定时器导入。实际专用包分区、完整签名包安装、Base 联合升级与实板容量尚未完成，当前代码只可作为研发检查点。
+`esp-container` 是面向 ESP-IDF 的业务包运行组件。当前提供独立 `esp_container` IDF 组件、受限 Wasm 扫描器、counter guest 的固定 freestanding 构建与静态检查、公开 guest SDK 草案、确定性 ustar 打包与 RSA-3072/PSS 验包工具、只读回调式设备验包及 Wasm ABI/能力检查切片、三槽原始 Flash 存储软件切片、双固件集合对账、精确分区前置的 ESP-IDF Flash/NVS provider，以及组件私有的 WAMR Classic 单实例运行切片。三槽候选回读组合签名包、Wasm 与独立产品/配额授权；私有同步装载入口在同一槽锁内从实际确认绑定或本 boot 的试运行记录重新验包授权，短时映射并完成 WAMR 装载。运行期使用 ABI 2 的页内事件区，保持完整 64 KiB 标准内存边界，并提供逐项授权的单调时间、有界日志和受配额定时器导入。实际专用包分区、完整签名包安装、Base 联合升级与实板容量尚未完成，当前代码只可作为研发检查点。
 
 ## 架构拓扑
 
@@ -21,7 +21,9 @@ flowchart LR
     slots --> slot_callbacks["调用方 Flash / NVS 回调接口"]
     idf_provider["slots_idf：精确专用分区 / NVS 接线"] --> slot_callbacks
     idf_provider --> idf_storage["ESP-IDF esp_partition / NVS"]
-    scanner --> runtime["组件私有单实例运行 API：ABI / 事件复制 / 生命周期"]
+    slots --> bridge["组件私有槽装载：真实绑定 / 锁内重新验包授权 / 短时映射"]
+    idf_provider --> bridge
+    bridge --> runtime["组件私有单实例运行 API：ABI / 事件复制 / 生命周期"]
     sdk["guest-sdk：精确导入声明"] --> runtime
     runtime --> host["单调时间 / 实例私有待取日志 / 定时器"]
     runtime --> wamr["锁定 WAMR Classic：加载 / 每入口指令预算"]
@@ -31,7 +33,7 @@ flowchart LR
     base["esp-base：未来的平台装配与持久授权"]
 ```
 
-IDF 组件物理路径为 `components/esp_container`，其名称与仓库 `esp-container` 属不同命名空间。公开 Git 消费方须把完整提交 SHA 和 `path: components/esp_container` 写入 `idf_component.yml`。WAMR 由该组件的 manifest 固定到[公开维护 fork](docs/design/source-provenance.md) 的完整修复提交；[SDK 锁](components/esp_container/sdk-lock.json)固定公开 ESP-IDF fork `578cf89c343e388db43ba1f4ddcd602fedcb763c` 与 lwIP 源码，组件构建核对锁定组合。组件配置还要求 Classic/Normal loader、指令计量，并拒绝 WAMR 默认开启的 AOT/Fast/WASI/guest pthread 等特性；消费者按[C3 样例](examples/c3-runtime/README.md)在 `project()` 前设置计量/bulk/shared memory，且在 `sdkconfig.defaults` 设置 WAMR Kconfig。独立样例不读取相邻工作区、私有 Tool 或生产凭据。
+IDF 组件物理路径为 `components/esp_container`，其名称与仓库 `esp-container` 属不同命名空间。公开 Git 消费方须把完整提交 SHA 和 `path: components/esp_container` 写入 `idf_component.yml`。WAMR 由该组件的 manifest 固定到[公开维护 fork](docs/design/source-provenance.md) 的完整修复提交；[SDK 锁](components/esp_container/sdk-lock.json)固定公开 ESP-IDF fork `578cf89c343e388db43ba1f4ddcd602fedcb763c` 与 lwIP 源码，组件构建核对锁定组合。组件配置还要求 Classic/Normal loader、指令计量，并拒绝 WAMR 默认开启的 AOT/Fast/WASI/guest pthread/shrunk memory 等特性；消费者按[C3 样例](examples/c3-runtime/README.md)在 `project()` 前设置计量/bulk/shared/shrunk memory，且在 `sdkconfig.defaults` 设置 WAMR Kconfig。独立样例不读取相邻工作区、私有 Tool 或生产凭据。
 
 ## 本机验证
 
@@ -71,6 +73,7 @@ host 工具的包格式和使用步骤见 [包工具](tools/README.md)。[只读
 - [只读流式验包 API](components/esp_container/include/esp_container_package.h)
 - [候选包槽回读准入 API](components/esp_container/include/esp_container_package_slot.h)
 - [三槽存储 API](components/esp_container/include/esp_container_slots.h)与 [ESP-IDF provider](components/esp_container/include/esp_container_slots_idf.h)
+- [组件私有槽装载合同](components/esp_container/src/slot_runtime_internal.h)与[软件验证边界](docs/operations/three-slot-storage-checkpoint.md)
 - [guest SDK 与 counter 编译样例](examples/counter/README.md)
 - [主机包工具](tools/README.md)
 - [C3 原型](examples/c3-runtime/README.md)

@@ -4,7 +4,7 @@ dependencies:
       type: idf
     version: 6.1.0
   wasm-micro-runtime:
-    component_hash: e7a23b9581c6e5232c92d3595911231f0089ccb8e00406fe3ad4a344f1443633
+    component_hash: a799be27248cadffdee6f6fae988dbdf3f5d423baab0b1008d74b8581b5ed507
     dependencies:
     - name: idf
       version: '>=4.4'
@@ -19,10 +19,10 @@ dependencies:
     - esp32c6
     - esp32p4
     - esp32c5
-    version: a34d721b630213f59fde0b40cebbb980903660e8
+    version: 26c235e53e29acd8b43abe7f3b524577bd4d1ae5
 direct_dependencies:
 - idf
 - wasm-micro-runtime
-manifest_hash: 300d7a14c575cb8911387582b9475682721842032fa7e524fde72daf9ae58c8e
+manifest_hash: f2a46a0949d7afc63bfb7b369e99fa3622a75d43a6c7c56f33a207f93bdf3f7e
 target: esp32c3
 version: 3.0.0

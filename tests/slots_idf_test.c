@@ -37,6 +37,10 @@ static bool fail_open, fail_get, fail_set, fail_commit, commit_then_fail;
 static unsigned opens, commits, reads, writes, erases;
 static nvs_handle_t open_handle;
 static nvs_open_mode_t open_mode;
+static bool fail_map, null_map, mapping_live;
+static unsigned maps, unmaps;
+static size_t mapped_offset, mapped_size;
+static esp_partition_mmap_handle_t next_map_handle, live_map_handle;
 
 static econtainer_slots_idf_config_t config(void)
 {
@@ -71,6 +75,10 @@ static void reset(void)
     stored_size = 0;
     opens = commits = reads = writes = erases = 0;
     open_handle = 0;
+    fail_map = null_map = mapping_live = false;
+    maps = unmaps = 0;
+    mapped_offset = mapped_size = 0;
+    next_map_handle = live_map_handle = 0;
     memset(flash, 0xff, sizeof flash);
     memset(stored_blob, 0, sizeof stored_blob);
     memset(staged_blob, 0, sizeof staged_blob);
@@ -87,6 +95,7 @@ int xSemaphoreTake(SemaphoreHandle_t semaphore, unsigned ticks)
 int xSemaphoreGive(SemaphoreHandle_t semaphore)
 {
     assert(semaphore == &storage_lock && semaphore->held);
+    assert(!mapping_live);
     semaphore->held = false;
     return pdTRUE;
 }
@@ -115,6 +124,7 @@ esp_err_t esp_partition_read(const esp_partition_t *partition, size_t offset,
 esp_err_t esp_partition_erase_range(const esp_partition_t *partition, size_t offset,
                                     size_t size)
 {
+    assert(!mapping_live);
     assert(partition == &package_partition && offset + size <= sizeof flash);
     assert(offset % SECTOR_BYTES == 0U && size % SECTOR_BYTES == 0U);
     ++erases;
@@ -125,6 +135,7 @@ esp_err_t esp_partition_erase_range(const esp_partition_t *partition, size_t off
 esp_err_t esp_partition_write(const esp_partition_t *partition, size_t offset,
                               const void *source, size_t size)
 {
+    assert(!mapping_live);
     assert(partition == &package_partition && offset + size <= sizeof flash);
     ++writes;
     const uint8_t *bytes = source;
@@ -133,6 +144,30 @@ esp_err_t esp_partition_write(const esp_partition_t *partition, size_t offset,
         flash[offset + index] = bytes[index];
     }
     return ESP_OK;
+}
+
+esp_err_t esp_partition_mmap(const esp_partition_t *partition, size_t offset,
+                             size_t size, esp_partition_mmap_flag_t flags,
+                             const void **out_ptr,
+                             esp_partition_mmap_handle_t *out_handle)
+{
+    assert(storage_lock.held && !mapping_live);
+    assert(partition == &package_partition && size > 0U && size <= sizeof flash);
+    assert(offset <= sizeof flash - size && out_ptr != NULL && out_handle != NULL);
+    assert(flags == (ESP_PARTITION_MMAP_DATA | ESP_PARTITION_MMAP_BLOCKS_WRITE));
+    ++maps; mapped_offset = offset; mapped_size = size;
+    /* Failure may modify SDK outputs; it never establishes a mapping. */
+    *out_ptr = flash + offset; *out_handle = next_map_handle;
+    if (fail_map) return ESP_FAIL;
+    mapping_live = true; live_map_handle = next_map_handle;
+    if (null_map) *out_ptr = NULL;
+    return ESP_OK;
+}
+
+void esp_partition_munmap(esp_partition_mmap_handle_t handle)
+{
+    assert(storage_lock.held && mapping_live && handle == live_map_handle);
+    mapping_live = false; ++unmaps;
 }
 
 esp_err_t nvs_open_from_partition(const char *partition_name,
@@ -178,6 +213,7 @@ esp_err_t nvs_set_blob(nvs_handle_t handle, const char *key, const void *data,
 
 esp_err_t nvs_commit(nvs_handle_t handle)
 {
+    assert(!mapping_live);
     assert(handle == open_handle && open_mode == NVS_READWRITE && staged);
     ++commits;
     if (!fail_commit || commit_then_fail) {
@@ -279,6 +315,65 @@ static void test_provider_io(void)
     assert(!storage_lock.held && writes == 1 && erases == 1 && reads == 1);
 }
 
+static void test_provider_mapping(void)
+{
+    econtainer_slots_idf_config_t selected = config();
+    econtainer_slots_idf_provider_t provider;
+    assert(econtainer_slots_idf_bind(&provider, &selected));
+    assert(provider.io.flash_map != NULL && provider.io.flash_unmap != NULL);
+    assert(provider.io.lock(provider.io.context));
+    for (size_t i = 0; i < sizeof flash; ++i) flash[i] = (uint8_t)(i * 29U);
+    const uint8_t *mapped = NULL; uintptr_t handle = UINTPTR_MAX;
+    const size_t relative_offset = SECTOR_BYTES + 3U, size = SECTOR_BYTES + 5U;
+    assert(provider.io.flash_map(provider.io.context,
+        PACKAGE_BASE + (uint32_t)relative_offset, size, &mapped, &handle));
+    assert(mapping_live && handle == 0U && mapped == flash + relative_offset);
+    assert(mapped_offset == relative_offset && mapped_size == size);
+    assert(memcmp(mapped, flash + relative_offset, size) == 0);
+    provider.io.flash_unmap(provider.io.context, handle);
+    assert(!mapping_live && maps == 1 && unmaps == 1);
+
+    next_map_handle = UINT32_MAX;
+    assert(provider.io.flash_map(provider.io.context,
+        PACKAGE_BASE + PACKAGE_BYTES - 1U, 1U, &mapped, &handle));
+    assert(mapped == flash + PACKAGE_BYTES - 1U && mapped_size == 1U && handle == UINT32_MAX);
+    provider.io.flash_unmap(provider.io.context, handle);
+    assert(!mapping_live && maps == 2 && unmaps == 2);
+
+    const struct { uint32_t offset; size_t size; } invalid[] = {
+        {PACKAGE_BASE, 0}, {PACKAGE_BASE - 1U, 1},
+        {PACKAGE_BASE + PACKAGE_BYTES, 1}, {PACKAGE_BASE + 1U, PACKAGE_BYTES},
+        {PACKAGE_BASE, SIZE_MAX}, {PACKAGE_BASE, SIZE_MAX - 3U},
+        {UINT32_MAX, 2},
+    };
+    for (size_t i = 0; i < sizeof invalid / sizeof invalid[0]; ++i) {
+        mapped = flash; handle = UINTPTR_MAX;
+        assert(!provider.io.flash_map(provider.io.context, invalid[i].offset,
+            invalid[i].size, &mapped, &handle));
+        assert(mapped == NULL && handle == 0U && maps == 2 && unmaps == 2);
+    }
+    handle = UINTPTR_MAX;
+    assert(!provider.io.flash_map(provider.io.context, PACKAGE_BASE, 1U, NULL, &handle));
+    assert(handle == 0U);
+    mapped = flash;
+    assert(!provider.io.flash_map(provider.io.context, PACKAGE_BASE, 1U, &mapped, NULL));
+    assert(mapped == NULL);
+    mapped = flash; handle = UINTPTR_MAX;
+    assert(!provider.io.flash_map(NULL, PACKAGE_BASE, 1U, &mapped, &handle));
+    assert(mapped == NULL && handle == 0U && maps == 2);
+
+    fail_map = true; next_map_handle = 123U;
+    mapped = flash; handle = UINTPTR_MAX;
+    assert(!provider.io.flash_map(provider.io.context, PACKAGE_BASE + 7U, 29U, &mapped, &handle));
+    assert(mapped == NULL && handle == 0U && !mapping_live && maps == 3 && unmaps == 2);
+    fail_map = false; null_map = true;
+    mapped = flash; handle = UINTPTR_MAX;
+    assert(!provider.io.flash_map(provider.io.context, PACKAGE_BASE, 1U, &mapped, &handle));
+    assert(mapped == NULL && handle == 0U && !mapping_live && maps == 4 && unmaps == 3);
+    provider.io.unlock(provider.io.context);
+    assert(!storage_lock.held && erases == 0 && writes == 0 && commits == 0);
+}
+
 static void test_slot_engine_with_idf_provider(void)
 {
     econtainer_slots_idf_config_t selected = config();
@@ -317,6 +412,8 @@ int main(void)
     reset();
     test_provider_io();
     reset();
+    test_provider_mapping();
+    reset();
     test_slot_engine_with_idf_provider();
     reset();
     package_partition.encrypted = true;
@@ -324,5 +421,5 @@ int main(void)
     econtainer_slots_idf_provider_t provider;
     assert(econtainer_slots_idf_bind(&provider, &selected));
     assert(provider.geometry.write_unit_bytes == 16U);
-    puts("  IDF provider partition guards, Flash/NVS commit and slot engine passed");
+    puts("  IDF provider partition/map guards, exact offsets, unmap, Flash/NVS commit and slot engine passed");
 }

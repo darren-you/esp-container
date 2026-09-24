@@ -113,6 +113,14 @@ typedef struct {
     bool (*flash_erase)(void *context, uint32_t offset_bytes, uint32_t size_bytes);
     bool (*flash_write)(void *context, uint32_t offset_bytes,
                         const uint8_t *source, size_t size_bytes);
+    /* Optional for storage-only consumers, required by the private loader.
+     * Called only under this same lock. Success exposes exactly size_bytes
+     * immutable bytes until flash_unmap; failure leaves no mapping and clears
+     * both outputs. A successful handle may be zero. No write/commit is allowed
+     * between map and unmap. These are short-lived loader resources, not leases. */
+    bool (*flash_map)(void *context, uint32_t offset_bytes, size_t size_bytes,
+                      const uint8_t **mapped, uintptr_t *handle);
+    void (*flash_unmap)(void *context, uintptr_t handle);
     void *context;
 } econtainer_slots_io_t;
 

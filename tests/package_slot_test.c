@@ -93,7 +93,7 @@ static bool fake_flash_read(void *context, uint32_t offset,
         (store->fail_after_read_count != 0 &&
          store->read_count >= store->fail_after_read_count)) return false;
     if (length > store->largest_read) store->largest_read = length;
-    memcpy(destination, store->flash + offset - FLASH_BASE, length);
+    memcpy(destination, store->flash + (offset - FLASH_BASE), length);
     return true;
 }
 
@@ -102,7 +102,7 @@ static bool fake_flash_erase(void *context, uint32_t offset, uint32_t length)
     fake_store_t *store = context;
     assert(store->locked);
     if (!flash_bounds(offset, length) || length != SLOT_BYTES) return false;
-    memset(store->flash + offset - FLASH_BASE, 0xff, length);
+    memset(store->flash + (offset - FLASH_BASE), 0xff, length);
     return true;
 }
 
@@ -113,7 +113,7 @@ static bool fake_flash_write(void *context, uint32_t offset,
     assert(store->locked);
     if (!flash_bounds(offset, length) || length % 4 != 0) return false;
     for (size_t index = 0; index < length; ++index) {
-        uint8_t *destination = store->flash + offset - FLASH_BASE + index;
+        uint8_t *destination = store->flash + (offset - FLASH_BASE) + index;
         if ((*destination & source[index]) != source[index]) return false;
         *destination &= source[index];
     }
@@ -176,7 +176,7 @@ int main(int argc, char **argv)
     memcpy(operation.target_firmware_sha256, firmware_set.running_firmware_sha256, 32);
     assert(SHA256(package, package_size, operation.package_sha256) != NULL);
     operation.package_size_bytes = (uint32_t)package_size;
-    operation.guest_abi_version = 1;
+    operation.guest_abi_version = 2;
     operation.data_schema_version = 1;
     if (strcmp(argv[3], "schema") == 0) operation.data_schema_version = 2;
 

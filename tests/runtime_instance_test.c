@@ -32,7 +32,6 @@ static const econtainer_runtime_limits_t limits = {
     .max_wasm_bytes = 512 * 1024,
     .max_memory_pages = 1,
     .stack_size_bytes = 4096,
-    .heap_size_bytes = 4096,
     .max_event_bytes = 128,
     .init_instruction_budget = 1000,
     .event_instruction_budget = 1000,
@@ -343,28 +342,113 @@ static bool test_loop(const char *path, unsigned entry)
     return true;
 }
 
-static bool test_event_allocation_failure(const char *path)
+static bool test_maximum_event(const char *path)
 {
     size_t length = 0;
     uint8_t *bytes = read_file(path, &length);
     CHECK(bytes != NULL);
     econtainer_runtime_limits_t pressure = limits;
-    pressure.max_event_bytes = pressure.heap_size_bytes;
+    pressure.max_event_bytes = ECONTAINER_EVENT_BUFFER_BYTES;
+    pressure.event_instruction_budget = 100000;
     econtainer_runtime_t *runtime = NULL;
     CHECK(econtainer_runtime_open(bytes, length, &pressure, &runtime) == ECONTAINER_RUNTIME_OK);
     free(bytes);
     CHECK(econtainer_runtime_init(runtime) == ECONTAINER_RUNTIME_OK);
-    uint8_t event[4096] = {0};
+    uint8_t event[ECONTAINER_EVENT_BUFFER_BYTES] = {0};
+    event[0] = 7;
+    event[sizeof(event) - 1] = 13;
     int32_t result = -1;
     CHECK(econtainer_runtime_on_event(runtime, event, sizeof(event), &result) ==
-          ECONTAINER_RUNTIME_NO_MEMORY);
+          ECONTAINER_RUNTIME_OK);
+    CHECK(result == 20);
     CHECK(econtainer_runtime_state(runtime) == ECONTAINER_RUNTIME_RUNNING);
     const uint8_t small_event[] = {2, 3, 5};
     CHECK(econtainer_runtime_on_event(runtime, small_event, sizeof(small_event), &result) ==
           ECONTAINER_RUNTIME_OK);
-    CHECK(result == 10);
+    CHECK(result == 30);
     CHECK(econtainer_runtime_stop(runtime) == ECONTAINER_RUNTIME_OK);
     econtainer_runtime_close(&runtime);
+    return true;
+}
+
+static bool test_standard_page(const char *path)
+{
+    size_t length = 0;
+    uint8_t *bytes = read_file(path, &length);
+    CHECK(bytes != NULL);
+    econtainer_runtime_limits_t page_limits = limits;
+    page_limits.max_event_bytes = ECONTAINER_EVENT_BUFFER_BYTES;
+    page_limits.init_instruction_budget = 4000000;
+    page_limits.event_instruction_budget = 100000;
+    econtainer_runtime_t *runtime = NULL;
+    CHECK(econtainer_runtime_open(bytes, length, &page_limits, &runtime) == ECONTAINER_RUNTIME_OK);
+    CHECK(econtainer_runtime_init(runtime) == ECONTAINER_RUNTIME_OK);
+    int32_t result = 0;
+    uint8_t event[ECONTAINER_EVENT_BUFFER_BYTES];
+    memset(event, 0x5a, sizeof(event));
+    event[0] = 'E';
+    event[sizeof(event) - 1] = 42;
+    CHECK(econtainer_runtime_on_event(runtime, event, sizeof(event), &result) == ECONTAINER_RUNTIME_OK);
+    CHECK(result == 42);
+    const uint8_t commands[] = {'Z', 'P', 'G', 'P', 'L'};
+    const int32_t results[] = {0, 1, -1, 1, 77};
+    for (size_t index = 0; index < sizeof(commands); ++index) {
+        CHECK(econtainer_runtime_on_event(runtime, &commands[index], 1, &result) == ECONTAINER_RUNTIME_OK);
+        CHECK(result == results[index]);
+    }
+    CHECK(econtainer_runtime_stop(runtime) == ECONTAINER_RUNTIME_OK);
+    CHECK(econtainer_runtime_close(&runtime) == ECONTAINER_RUNTIME_OK);
+    const uint8_t invalid[] = {'O', 'S', 'U'};
+    for (size_t index = 0; index < sizeof(invalid); ++index) {
+        CHECK(econtainer_runtime_open(bytes, length, &page_limits, &runtime) == ECONTAINER_RUNTIME_OK);
+        CHECK(econtainer_runtime_init(runtime) == ECONTAINER_RUNTIME_OK);
+        result = 123;
+        CHECK(econtainer_runtime_on_event(runtime, &invalid[index], 1, &result) ==
+              ECONTAINER_RUNTIME_ENGINE_FAILURE);
+        CHECK(result == 123 && econtainer_runtime_state(runtime) == ECONTAINER_RUNTIME_FAILED);
+        CHECK(econtainer_runtime_close(&runtime) == ECONTAINER_RUNTIME_OK && runtime == NULL);
+    }
+    free(bytes);
+    return true;
+}
+
+static bool test_event_buffer_abi(const char *path)
+{
+    size_t length = 0;
+    uint8_t *bytes = read_file(path, &length);
+    CHECK(bytes != NULL);
+    const char *name = "econtainer_event_buffer";
+    size_t name_offset = length;
+    for (size_t index = 0; index + strlen(name) + 2 <= length; ++index)
+        if (memcmp(bytes + index, name, strlen(name)) == 0) { name_offset = index; break; }
+    CHECK(name_offset != length);
+    const size_t kind_offset = name_offset + strlen(name);
+    CHECK(bytes[kind_offset] == 3 && bytes[kind_offset + 1] == 1);
+    econtainer_runtime_t *runtime = NULL;
+    /* Missing export, and exporting the mutable stack pointer, both fail closed. */
+    bytes[name_offset] = 'x';
+    CHECK(econtainer_runtime_open(bytes, length, &limits, &runtime) == ECONTAINER_RUNTIME_BAD_ABI);
+    CHECK(runtime == NULL);
+    bytes[name_offset] = 'e';
+    bytes[kind_offset + 1] = 0;
+    CHECK(econtainer_runtime_open(bytes, length, &limits, &runtime) == ECONTAINER_RUNTIME_BAD_ABI);
+    CHECK(runtime == NULL);
+    bytes[kind_offset + 1] = 1;
+    /* Fixed SDK emits the BSS address 4112 as this immutable global. */
+    const uint8_t global[] = {0x7f, 0, 0x41, 0x90, 0x20, 0x0b};
+    size_t value_offset = length;
+    for (size_t index = 8; index + sizeof(global) <= length; ++index)
+        if (memcmp(bytes + index, global, sizeof(global)) == 0) { value_offset = index + 3; break; }
+    CHECK(value_offset != length);
+    bytes[value_offset] = 0xff;
+    bytes[value_offset + 1] = 0x7f; /* Valid padded i32.const -1. */
+    CHECK(econtainer_runtime_open(bytes, length, &limits, &runtime) == ECONTAINER_RUNTIME_BAD_ABI);
+    CHECK(runtime == NULL);
+    bytes[value_offset] = 0x80;
+    bytes[value_offset + 1] = 0;
+    CHECK(econtainer_runtime_open(bytes, length, &limits, &runtime) == ECONTAINER_RUNTIME_BAD_ABI);
+    CHECK(runtime == NULL);
+    free(bytes);
     return true;
 }
 
@@ -890,8 +974,8 @@ static bool test_expired_entry(const char *path)
 
 int main(int argc, char **argv)
 {
-    if (argc != 12) {
-        fprintf(stderr, "usage: %s counter event-read init-loop event-loop stop-loop stop-fail wrong-signature host-api timer deadline two-page\n",
+    if (argc != 13) {
+        fprintf(stderr, "usage: %s counter event-read init-loop event-loop stop-loop stop-fail wrong-signature host-api timer deadline two-page memory\n",
                 argv[0]);
         return 2;
     }
@@ -908,7 +992,8 @@ int main(int argc, char **argv)
                         test_readonly_flash_sized_wasm(argv[1]) &&
                         test_malformed_sections(argv[1]) &&
 #endif
-                        test_event_allocation_failure(argv[2]) &&
+                        test_maximum_event(argv[2]) && test_standard_page(argv[12]) &&
+                        test_event_buffer_abi(argv[1]) &&
                         test_loop(argv[3], 0) && test_loop(argv[4], 1) &&
                         test_loop(argv[5], 2) &&
                         test_wrong_abi_and_release(argv[7], argv[1], argv[11]) &&

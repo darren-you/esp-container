@@ -1,12 +1,12 @@
 # Counter guest 草案
 
-`counter.c` 只定义 `econtainer_init`、`econtainer_on_event` 和 `econtainer_stop` 三个显式导出入口，不使用宿主 import、WASI、线程、构造函数或设备输出。公开头位于 `guest-sdk/include/econtainer_guest.h`。`tools/counter_guest.py` 固定此样例的 freestanding 编译参数与静态 ABI/profile 检查；完整宿主 API、可安装产品包和真实 C3 业务生命周期仍未验收。
+`counter.c` 只定义 `econtainer_init`、`econtainer_on_event` 和 `econtainer_stop` 三个显式导出入口，不使用宿主 import、WASI、线程、构造函数或设备输出。公开头位于 `guest-sdk/include/econtainer_guest.h`；ABI 2 同时链接 `guest-sdk/src/econtainer_guest.c`，导出页内 4 KiB 事件区的不可变地址 global。`tools/counter_guest.py` 固定此样例的 freestanding 编译参数与静态 ABI/profile 检查；完整宿主 API、可安装产品包和真实 C3 业务生命周期仍未验收。
 
 ## 架构拓扑
 
 ```mermaid
 flowchart LR
-    sdk["guest-sdk/include/econtainer_guest.h"] --> source["counter.c：计数状态机"]
+    sdk["guest-sdk：头文件 / 页内事件区实现"] --> source["counter.c：计数状态机"]
     source --> builder["tools/counter_guest.py：编译与静态检查"]
     wasi["wasi-sdk 33：固定编译器输入"] --> builder
     builder --> wasm["app.wasm：标准 freestanding Wasm"]
@@ -24,7 +24,7 @@ python3 tools/counter_guest.py check --wasm dist/app.wasm
 WASI_SDK_ROOT="$WASI_SDK_ROOT" python3 -m unittest tests.test_counter_guest -v
 ```
 
-编译入口使用 `wasm32-unknown-unknown`、`-nostdlib`、`--no-entry`，只导出三个函数和固定线性内存。它显式关闭 bulk memory、reference types、SIMD、原子操作、尾调用及其他不需要的目标特性；静态检查要求没有 `target_features` 声明、import、start、table、data、隐式构造入口，三个函数签名分别为 `() -> i32`、`(i32,i32) -> i32`、`() -> i32`，内存初始值与最大值同为一页，即 64 KiB。链接器预留 4 KiB 栈，检查器核对栈指针在固定内存内；指令合法性仍由锁定 WAMR loader 验证。旧两页样例由检查器拒绝。
+编译入口使用 `wasm32-unknown-unknown`、`-nostdlib`、`--no-entry`，只导出三个函数、固定线性内存和 `econtainer_event_buffer` 地址 global。它显式关闭 bulk memory、reference types、SIMD、原子操作、尾调用及其他不需要的目标特性；静态检查要求没有 `target_features` 声明、import、start、table、data、隐式构造入口，三个函数签名分别为 `() -> i32`、`(i32,i32) -> i32`、`() -> i32`，内存初始值与最大值同为一页，即 64 KiB。链接器预留 4 KiB 栈，检查器核对栈和事件区均在固定内存内且不重叠；指令合法性仍由锁定 WAMR loader 验证。旧两页样例由检查器拒绝。
 
 可先按[仓根说明](../../README.md)构建锁定 WAMR 主机测试，再运行 `build-wamr/wamr_classic_test dist/app.wasm`，实际调用 init、两次 event、非法指针事件和 stop。该主机测试不会写板，也不证明设备资源配额、宿主句柄和事件复制正确。
 

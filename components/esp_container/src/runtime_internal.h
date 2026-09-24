@@ -15,7 +15,6 @@ typedef struct {
     uint32_t max_wasm_bytes;
     uint32_t max_memory_pages;
     uint32_t stack_size_bytes;
-    uint32_t heap_size_bytes;
     uint32_t max_event_bytes;
     uint32_t allowed_capabilities;
     uint32_t max_log_bytes;

@@ -14,6 +14,7 @@ flowchart LR
     package --> slot_admission["package_slot_test：真实签名包写槽/回读授权"]
     slots --> slot_admission
     slot_admission --> ctest
+    slot_admission --> slot_runtime["slot_runtime_test：真实签名 P0-P3 / 锁内映射装载 / 并发写互斥"]
     slots["slots_test.c：双固件集合 / 三槽保护 / NVS 断写"] --> ctest
     idf_slots["slots_idf_test.c：精确分区 / NVS commit / Flash 回调"] --> ctest
     scanner["esp_container/src/wasm_scan.c"] --> c["wasm_scan_test.c：section 与入口拒绝"]
@@ -23,6 +24,9 @@ flowchart LR
     guest --> baseline
     guest --> fixtures["build_runtime_guests.py：counter、故障、定时器、宿主导入与期限 guest"]
     wamr --> instance["runtime_instance_test.c：私有单实例 API"]
+    wamr --> slot_runtime
+    fixtures --> slot_runtime
+    slot_runtime --> ctest
     fixtures --> instance
     scanner --> instance
     py --> host["本机 unittest"]
@@ -40,7 +44,7 @@ ctest --test-dir build --output-on-failure
 
 `wamr_classic` 是底层真实引擎基线：先构建 C3 样例并核对锁文件中 WAMR 的 Git SHA 与 `.component_hash`，再按仓根 README 的 `ESP_CONTAINER_WAMR_SOURCE` 命令重新配置主机 CMake。该测试把正常执行与精确的 `Exception: instruction limit exceeded` 分开判定；其他 trap、加载失败和初始化失败都不能冒充额度命中。
 
-同时设置 `ESP_CONTAINER_WASI_SDK_ROOT="$WASI_SDK_ROOT"` 会增加 `runtime_instance`：构建时临时编译真实 counter、事件读取、三个死循环、stop 返回失败、错误函数签名、时钟/日志、定时器和期限 guest；测试单实例占用、原始输入释放后继续调用、guest 内存中的事件复制、分离 guest 返回值与宿主状态、内存页上限、宿主分配失败、每入口正数指令预算、失败后释放、重复 stop/close、一次及周期定时事件、配额/取消/代次、停止后拒绝迟到投递，以及各 100 次 counter、时钟/日志、定时器和失败后重开生命周期。期限 guest 分别检查运行中导入拒绝与返回后结果拒绝，并核对本次日志丢弃、失败态和关闭。macOS 非 sanitizer 构建在每组第 10/50/100 次关闭后检查 `malloc_zone_statistics` 堆用量与 `TASK_VM_INFO` 虚拟地址用量持平，并记录 VM 区域数。生成的 Wasm 留在构建目录，不提交。此私有 API 在 ESP-IDF 上必须由同一个 `pthread_create` 宿主线程串行调用；普通 `xTaskCreate` 任务调用 WAMR 会在 `pthread_self` 断言。完整合同见[运行切片检查点](../docs/operations/single-instance-runtime-checkpoint.md)和[宿主导入检查点](../docs/operations/host-api-checkpoint.md)。
+同时设置 `ESP_CONTAINER_WASI_SDK_ROOT="$WASI_SDK_ROOT"` 会增加 `runtime_instance`：构建时临时编译真实 counter、事件读取、三个死循环、stop 返回失败、错误函数签名、时钟/日志、定时器和期限 guest；测试单实例占用、原始输入释放后继续调用、guest 内存中的事件复制、分离 guest 返回值与宿主状态、内存页上限、页内事件 buffer ABI 错误拒绝、每入口正数指令预算、失败后释放、重复 stop/close、一次及周期定时事件、配额/取消/代次、停止后拒绝迟到投递，以及各 100 次 counter、时钟/日志、定时器和失败后重开生命周期。期限 guest 分别检查运行中导入拒绝与返回后结果拒绝，并核对本次日志丢弃、失败态和关闭。macOS 非 sanitizer 构建在每组第 10/50/100 次关闭后检查 `malloc_zone_statistics` 堆用量与 `TASK_VM_INFO` 虚拟地址用量持平，并记录 VM 区域数。生成的 Wasm 留在构建目录，不提交。此私有 API 在 ESP-IDF 上必须由同一个 `pthread_create` 宿主线程串行调用；普通 `xTaskCreate` 任务调用 WAMR 会在 `pthread_self` 断言。完整合同见[运行切片检查点](../docs/operations/single-instance-runtime-checkpoint.md)和[宿主导入检查点](../docs/operations/host-api-checkpoint.md)。
 
 设置 `WASI_SDK_ROOT` 为官方 wasi-sdk 33 的解压目录后，Python 测试还会真实编译 counter 两次并比较不同输出路径的字节，验证包扫描接受产物，同时用改坏的函数签名、共享/无界内存、目标特性节和自动 start 作负例。先运行 `python3 tools/counter_guest.py build --wasi-sdk "$WASI_SDK_ROOT" --output dist/app.wasm`，再运行 `build-wamr/wamr_classic_test dist/app.wasm`，可让固定 WAMR Classic loader 实际执行三个 guest 入口；未提供该工具链时，counter 编译测试会明确跳过。
 
@@ -48,8 +52,16 @@ Python 测试使用每次生成的 RSA-3072 临时测试密钥，覆盖确定性
 
 `package_slot` CTest 将真实临时签名包写入假 Flash 三槽，由槽引擎从实际候选槽回读，再执行签名、Wasm、产品身份、schema 和资源限额检查；错误产品、key ID、schema、内存、队列、指令预算、宿主期限均返回 `UNTRUSTED`，验签和 Wasm 静态扫描的二次读故障分别返回 `IO_FAILED`，均不得进入 PREPARED。该测试不证明设备真实分区或 Base 授权装配。
 
+同时提供锁定 WAMR 与 wasi-sdk 33 后新增 `slot_runtime` CTest。Python 在临时目录生成 RSA-3072 密钥，把真实编译 counter 签成 P0/P1/P2/P3；C 测试通过正常 `reserve → write_and_prepare → begin_trial → open/init/event/stop/close → mark_healthy → confirm` 更新两个固件的真实持久绑定，并保持旧固件 P0 可恢复。当前固件确认包可在未决候选损坏时重新验签启动；任一已确认固件引用损坏或读取失败仍阻止装载。
+
+同一测试拒绝 PREPARED、HEALTH_VERIFIED、旧 boot、错误 operation/sequence/固件集合，拒绝映射成另一份完整合法签名包、错误产品、独立授权和超限 policy。映射使用真实只读 `mmap`，在返回实例之前立即 `munmap`；含非空 data 节的宿主导入 guest 随后仍读出 `init` 和 `first`。合法签名中 1 条指令、8 字节执行栈分别使 counter 触发指令额度和引擎栈失败，证明较大的平台默认值没有覆盖签名限额；非法平台栈、全局 runtime BUSY 和真实 WAMR loader 拒绝也必须清理映射且允许重新打开确认包。装载返回的 `slots` 与 `runtime` 两个结果分别断言，只有二者均为 OK 才执行 guest。映射失败不解映射，成功映射包括 NULL 指针的错误 provider 情形均恰好清理一次。两个 pthread 在映射建立后及 WAMR open 后通过条件变量安排真实竞争 `reserve/write_and_prepare`，两次均返回 BUSY，擦写计数不变；没有用睡眠猜测并发时序。
+
+IDF provider 假件另覆盖非对齐映射、最后一字节、长度/地址越界、0/最大合法 handle、SDK 失败与成功但 NULL 的清理，核对 `DATA | BLOCKS_WRITE` 及精确分区相对偏移。所有映射路径必须处于共享槽锁内，解除映射前不允许 Flash 擦写、NVS commit 或解锁。这些是合成存储与真实解释器的软件验证，未调用 Base 的物理分区或生产信任锚。
+
 C3 单页分支以固定 wasi-sdk 33 生成 64 KiB counter 与宿主 API guest，并构造结构正确的旧两页 counter 作为负例。主机打包、设备包槽回读静态扫描和私有运行期都拒绝两页 guest；旧清单的 128 KiB 内存限额也分别由主机及设备端拒绝。该回归只证明限额接线，不证明 FRP/TLS/MQTT 与 guest 同时运行。
 
 节装载回归把真实宿主导入及非空数据节 guest、373 KiB 自定义节填充 counter 放入只读 `mmap`，在 `open` 后立即 `munmap`，再调用 `init`、`on_event` 和 `stop`；前者还验证数据节提供的 `init`/`first` 日志。畸形节长度和 WAMR 拒绝的非法 UTF-8 自定义节均不能进入实例。填充 counter 只验证不再按 Wasm 总长度复制，不能代表相同大小的业务代码可在 C3 运行；真实代码节的 QEMU 容量边界见[单页 profile](../docs/operations/c3-low-memory-profile.md)。
 
 主机测试不能证明设备流式 Flash 读回、C3 运行时内存/期限、掉电恢复或真实 C3 组合。对应实板任务与阻塞在跨仓主计划 P6/P7 中记录。
+
+ABI 2 回归另用 `memory_guest.c` 的显式 Wasm load/store 覆盖全部 65,536 字节写入读回、末字节访问、`memory.size=1`、`memory.grow(1)=-1` 和页外 load/store/跨页 load trap；在同一实例验证 4,096 字节最大事件及返回后的事件区清零。签名 host/设备负例覆盖旧四导出、错误 global 索引/类型/可变性、零/负值/跨页地址、畸形有符号 LEB；WAMR 实例另拒绝缺失/可变/负值/零事件区。原生侧不再为每次事件分配附加 guest heap。

@@ -1,4 +1,4 @@
-#include "esp_container_package_slot.h"
+#include "package_slot_internal.h"
 
 #include <limits.h>
 #include <string.h>
@@ -30,11 +30,11 @@ static bool product_matches(const econtainer_package_slot_validation_t *validati
                   validation->expected_product_id, expected_size) == 0;
 }
 
-econtainer_slot_validation_result_t econtainer_package_slot_validate(
-    void *context, const econtainer_slot_operation_t *operation,
+econtainer_slot_validation_result_t econtainer_package_slot_check(
+    econtainer_package_slot_validation_t *validation,
+    const econtainer_slot_package_t *package,
     econtainer_slot_read_fn read_fn, void *read_context, size_t package_size_bytes)
 {
-    econtainer_package_slot_validation_t *validation = context;
     if (validation == NULL || validation->verified_info == NULL) {
         return ECONTAINER_SLOT_VALIDATION_UNTRUSTED;
     }
@@ -45,7 +45,7 @@ econtainer_slot_validation_result_t econtainer_package_slot_validate(
         memset(validation->package_workspace->signature, 0,
                sizeof(validation->package_workspace->signature));
     }
-    if (read_fn == NULL || operation == NULL ||
+    if (read_fn == NULL || package == NULL ||
         validation->expected_product_id == NULL ||
         validation->expected_product_id[0] == '\0' ||
         validation->public_key_rsa_der == NULL || validation->expected_key_id == NULL ||
@@ -54,7 +54,7 @@ econtainer_slot_validation_result_t econtainer_package_slot_validate(
         validation->max_instruction_budget == 0U ||
         validation->max_instruction_budget > INT32_MAX ||
         validation->max_host_call_timeout_ms == 0U ||
-        package_size_bytes != operation->package_size_bytes) {
+        package_size_bytes != package->package_size_bytes) {
         return ECONTAINER_SLOT_VALIDATION_UNTRUSTED;
     }
 
@@ -74,9 +74,9 @@ econtainer_slot_validation_result_t econtainer_package_slot_validate(
                    : ECONTAINER_SLOT_VALIDATION_UNTRUSTED;
     }
     bool accepted = memcmp(info.package_sha256,
-                           operation->package_sha256, 32U) == 0 &&
-                    info.guest_abi_version == operation->guest_abi_version &&
-                    info.data_schema_version == operation->data_schema_version &&
+                           package->package_sha256, 32U) == 0 &&
+                    info.guest_abi_version == package->guest_abi_version &&
+                    info.data_schema_version == package->data_schema_version &&
                     product_matches(validation, &info) &&
                     info.event_queue_limit <= validation->max_event_queue_limit &&
                     info.instruction_budget <= validation->max_instruction_budget &&
@@ -102,4 +102,20 @@ econtainer_slot_validation_result_t econtainer_package_slot_validate(
                sizeof(validation->package_workspace->signature));
     }
     return result;
+}
+
+econtainer_slot_validation_result_t econtainer_package_slot_validate(
+    void *context, const econtainer_slot_operation_t *operation,
+    econtainer_slot_read_fn read_fn, void *read_context, size_t package_size_bytes)
+{
+    econtainer_slot_package_t package = {0};
+    if (operation != NULL) {
+        package.slot = operation->slot;
+        memcpy(package.package_sha256, operation->package_sha256, 32);
+        package.package_size_bytes = operation->package_size_bytes;
+        package.guest_abi_version = operation->guest_abi_version;
+        package.data_schema_version = operation->data_schema_version;
+    }
+    return econtainer_package_slot_check(context, operation != NULL ? &package : NULL,
+                                          read_fn, read_context, package_size_bytes);
 }

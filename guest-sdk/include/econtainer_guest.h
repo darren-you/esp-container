@@ -3,7 +3,14 @@
 
 #include <stdint.h>
 
-/* 初期 guest ABI 草案：均为显式入口，实例化时不执行用户代码。 */
+/* ABI 2 草案：均为显式入口，实例化时不执行用户代码。 */
+#define ECONTAINER_GUEST_ABI_VERSION 2U
+#define ECONTAINER_EVENT_BUFFER_BYTES 4096U
+/* 链接 guest-sdk/src/econtainer_guest.c 并显式导出此数组地址。
+ * 它是页内静态存储，由不可变 i32 Wasm global 表达，不是宿主指针。
+ * 非空事件仅在 on_event 调用期间借用该区；返回后内容清零，不得保留引用。
+ * 空事件仍为 (NULL, 0)。该区计入固定 64 KiB 线性内存，不能与自有对象重叠。 */
+extern uint8_t econtainer_event_buffer[ECONTAINER_EVENT_BUFFER_BYTES];
 /* init/stop 成功返回 0；on_event 返回非负业务结果，负数表示业务失败。 */
 int32_t econtainer_init(void);
 int32_t econtainer_on_event(const uint8_t *bytes, uint32_t size_bytes);

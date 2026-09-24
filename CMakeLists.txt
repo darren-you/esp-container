@@ -69,9 +69,11 @@ if(BUILD_TESTING)
         set(WAMR_BUILD_REF_TYPES 0)
         set(WAMR_BUILD_BULK_MEMORY 0)
         set(WAMR_BUILD_SHARED_MEMORY 0)
+        set(WAMR_BUILD_SHRUNK_MEMORY 0)
         set(WAMR_BUILD_INSTRUCTION_METERING 1)
         add_subdirectory("${ESP_CONTAINER_WAMR_SOURCE}" "${CMAKE_CURRENT_BINARY_DIR}/wamr")
-        target_sources(esp_container PRIVATE components/esp_container/src/runtime.c)
+        target_sources(esp_container PRIVATE components/esp_container/src/runtime.c
+            components/esp_container/src/slot_runtime.c)
         target_include_directories(esp_container PRIVATE components/esp_container/src)
         target_link_libraries(esp_container PRIVATE vmlib)
         add_executable(wamr_classic_test tests/wamr_classic_test.c)
@@ -97,14 +99,15 @@ if(BUILD_TESTING)
             list(APPEND runtime_guests "${runtime_guests_dir}/timer.wasm")
             list(APPEND runtime_guests "${runtime_guests_dir}/deadline.wasm")
             list(APPEND runtime_guests "${runtime_guests_dir}/two-page.wasm")
+            list(APPEND runtime_guests "${runtime_guests_dir}/memory.wasm")
             add_custom_command(OUTPUT ${runtime_guests}
                 COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/build_runtime_guests.py"
                     --wasi-sdk "${ESP_CONTAINER_WASI_SDK_ROOT}"
                     --output-dir "${runtime_guests_dir}"
                 DEPENDS tests/build_runtime_guests.py tests/runtime_guest.c tests/host_api_guest.c
-                    tests/timer_guest.c tests/deadline_guest.c
+                    tests/timer_guest.c tests/deadline_guest.c tests/memory_guest.c
                     tools/counter_guest.py examples/counter/counter.c
-                    guest-sdk/include/econtainer_guest.h
+                    guest-sdk/include/econtainer_guest.h guest-sdk/src/econtainer_guest.c
                 VERBATIM)
             add_custom_target(runtime_guest_fixtures DEPENDS ${runtime_guests})
             add_executable(runtime_instance_test tests/runtime_instance_test.c)
@@ -118,6 +121,16 @@ if(BUILD_TESTING)
             add_dependencies(runtime_instance_test runtime_guest_fixtures)
             add_test(NAME runtime_instance COMMAND runtime_instance_test ${runtime_guests})
             set_tests_properties(runtime_instance PROPERTIES TIMEOUT 15)
+            find_package(Threads REQUIRED)
+            add_executable(slot_runtime_test tests/slot_runtime_test.c)
+            target_include_directories(slot_runtime_test PRIVATE components/esp_container/src)
+            target_link_libraries(slot_runtime_test PRIVATE esp_container Threads::Threads)
+            target_compile_options(slot_runtime_test PRIVATE -Wall -Wextra -Werror -Wconversion -UNDEBUG)
+            add_dependencies(slot_runtime_test runtime_guest_fixtures)
+            add_test(NAME slot_runtime
+                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/slot_runtime_test.py"
+                    "$<TARGET_FILE:slot_runtime_test>" "${runtime_guests_dir}")
+            set_tests_properties(slot_runtime PROPERTIES TIMEOUT 30)
         endif()
     endif()
 endif()

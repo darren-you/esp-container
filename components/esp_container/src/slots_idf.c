@@ -89,6 +89,42 @@ static bool provider_flash_read(void *context, uint32_t offset_bytes,
                               destination, size_bytes) == ESP_OK;
 }
 
+static bool provider_flash_map(void *context, uint32_t offset_bytes,
+                               size_t size_bytes, const uint8_t **mapped,
+                               uintptr_t *handle)
+{
+    if (mapped != NULL) *mapped = NULL;
+    if (handle != NULL) *handle = 0U;
+    econtainer_slots_idf_provider_t *provider = context;
+    if (mapped == NULL || handle == NULL || provider == NULL ||
+        provider->package_partition == NULL ||
+        !range_valid(provider, offset_bytes, size_bytes)) return false;
+
+    const void *bytes = NULL;
+    esp_partition_mmap_handle_t sdk_handle = 0;
+    /* IDF adjusts the returned pointer to this exact, possibly unaligned
+     * partition offset. Hold the caller's slot lock through unmap; this flag
+     * also prevents cache-disabling Flash writes during the short load. */
+    if (esp_partition_mmap(provider->package_partition,
+                            offset_bytes - provider->package_partition->address,
+                            size_bytes,
+                            ESP_PARTITION_MMAP_DATA | ESP_PARTITION_MMAP_BLOCKS_WRITE,
+                            &bytes, &sdk_handle) != ESP_OK) return false;
+    if (bytes == NULL) {
+        esp_partition_munmap(sdk_handle);
+        return false;
+    }
+    *mapped = bytes;
+    *handle = (uintptr_t)sdk_handle;
+    return true;
+}
+
+static void provider_flash_unmap(void *context, uintptr_t handle)
+{
+    (void)context;
+    esp_partition_munmap((esp_partition_mmap_handle_t)handle);
+}
+
 static bool provider_flash_erase(void *context, uint32_t offset_bytes,
                                  uint32_t size_bytes)
 {
@@ -165,6 +201,8 @@ bool econtainer_slots_idf_bind(econtainer_slots_idf_provider_t *provider,
         .read_blob = provider_read_blob,
         .write_blob = provider_write_blob,
         .flash_read = provider_flash_read,
+        .flash_map = provider_flash_map,
+        .flash_unmap = provider_flash_unmap,
         .flash_erase = provider_flash_erase,
         .flash_write = provider_flash_write,
         .context = provider,

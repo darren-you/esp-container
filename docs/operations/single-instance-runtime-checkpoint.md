@@ -1,8 +1,12 @@
 # 单实例运行切片检查点：2026-09-23
 
-## 组件内合同
+当前 C3 分支已硬切到 ABI 2 页内事件区并取消附加 host heap；新合同与验证见[单页 profile 的 ABI 2 检查点](c3-low-memory-profile.md#abi-2-页内事件区与标准页边界)。下面各节保留旧四导出/附加 heap 的历史测试输入，不再作为当前 SDK 接线示例。
+
+## 初始组件内合同
 
 `components/esp_container/src/runtime_internal.h` 是组件私有边界。它接收内存中的 Wasm 与显式资源限制，仅用于当前可复现的软件检查点；公开头 `include/esp_container.h` 没有裸 Wasm 安装入口，Base 不能直接装配这套函数。
+
+2026-09-24 的 C3 候选另加组件私有 `slot_runtime_internal.h`：通过现有槽锁读取真实确认绑定或本 boot 已持久的 `TRIAL_STARTED`，对映射的同一完整包重新验签、授权和静态扫描，再调用私有 `open` 并立即解除映射。它不执行 `init`，不新增持久相位或租约；完整合同和新增真实签名集成证据见[三槽存储检查点](three-slot-storage-checkpoint.md)。以下原始运行切片验证保留其当时边界；当前按节复制与输入生命周期见[单页 profile](c3-low-memory-profile.md)。
 
 `open` 要求输出指针预先为 `NULL`，拒绝第二个实例，并复制一份供 WAMR 持有的可写模块字节。加载前先做现有无 import、无 start、无隐式构造入口扫描，再从原始 Wasm memory section 核对单块非共享、有限最大页数；WAMR 加载后核对四个且仅四个导出：`memory`、`econtainer_init() -> i32`、`econtainer_on_event(i32, i32) -> i32`、`econtainer_stop() -> i32`。WAMR 会规范化加载后的内存页数，所以不能拿其导出类型中的页数替代原始 section 上限检查。
 

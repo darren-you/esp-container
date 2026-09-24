@@ -19,6 +19,7 @@ config: f992bcc08219"""
 MEMORY_PAGES = 1
 PAGE_BYTES = 65536
 STACK_BYTES = 4096
+EVENT_BUFFER_BYTES = 4096
 EXPORT_TYPES = {
     "econtainer_init": ((), (0x7F,)),
     "econtainer_on_event": ((0x7F, 0x7F), (0x7F,)),
@@ -66,6 +67,19 @@ class Reader:
             if not octet & 0x80:
                 return value
         raise GuestError("Wasm 整数溢出")
+
+    def s32(self) -> int:
+        value = 0
+        for shift in range(0, 35, 7):
+            octet = self.byte()
+            if shift == 28 and (octet & 0x78) not in (0, 0x78):
+                raise GuestError("Wasm 有符号整数溢出")
+            value |= (octet & 0x7f) << shift
+            if not octet & 0x80:
+                if octet & 0x40:
+                    value |= -1 << (shift + 7)
+                return value
+        raise GuestError("Wasm 有符号整数溢出")
 
     def name(self) -> str:
         try:
@@ -116,19 +130,29 @@ def _memory(data: bytes) -> None:
     reader.end()
 
 
-def _global(data: bytes) -> None:
+def _global(data: bytes) -> int:
     reader = Reader(data)
-    if (reader.u32(), reader.byte(), reader.byte(), reader.byte()) != (1, 0x7F, 1, 0x41):
-        raise GuestError("counter 只允许一个 i32 栈指针全局变量")
+    if (reader.u32(), reader.byte(), reader.byte(), reader.byte()) != (2, 0x7F, 1, 0x41):
+        raise GuestError("counter 必须包含栈指针和页内事件区两个 i32 global")
     # The linker supplies a positive i32.const stack top. Its exact address is
     # compiler output, while the reserved stack size is fixed by the link flag.
-    stack_top = reader.u32()
+    stack_top = reader.s32()
     if not STACK_BYTES <= stack_top <= MEMORY_PAGES * PAGE_BYTES or reader.byte() != 0x0B:
         raise GuestError("counter 栈指针超出固定线性内存")
+    if (reader.byte(), reader.byte(), reader.byte()) != (0x7F, 0, 0x41):
+        raise GuestError("counter 事件区必须由不可变 i32 global 导出")
+    buffer_offset = reader.s32()
+    buffer_end = buffer_offset + EVENT_BUFFER_BYTES
+    if (buffer_offset <= 0 or buffer_end > MEMORY_PAGES * PAGE_BYTES or
+            not (buffer_end <= stack_top - STACK_BYTES or buffer_offset >= stack_top) or
+            reader.byte() != 0x0B):
+        raise GuestError("counter 事件区超出页内静态存储或与栈重叠")
     reader.end()
+    return 1
 
 
-def _exports(data: bytes, functions: list[tuple[tuple[int, ...], tuple[int, ...]]]) -> None:
+def _exports(data: bytes, functions: list[tuple[tuple[int, ...], tuple[int, ...]]],
+             buffer_global: int) -> None:
     reader = Reader(data)
     result: dict[str, tuple[int, int]] = {}
     for _ in range(reader.u32()):
@@ -137,7 +161,9 @@ def _exports(data: bytes, functions: list[tuple[tuple[int, ...], tuple[int, ...]
             raise GuestError("Wasm 导出名称重复")
         result[name] = (reader.byte(), reader.u32())
     reader.end()
-    if set(result) != set(EXPORT_TYPES) | {"memory"} or result["memory"] != (2, 0):
+    if (set(result) != set(EXPORT_TYPES) | {"memory", "econtainer_event_buffer"} or
+            result["memory"] != (2, 0) or
+            result["econtainer_event_buffer"] != (3, buffer_global)):
         raise GuestError("counter 导出集合与 guest ABI 不符")
     function_indexes = []
     for name, expected_type in EXPORT_TYPES.items():
@@ -184,8 +210,8 @@ def check_wasm(data: bytes) -> None:
     types = _types(sections[1])
     functions = _functions(sections[3], types)
     _memory(sections[5])
-    _global(sections[6])
-    _exports(sections[7], functions)
+    buffer_global = _global(sections[6])
+    _exports(sections[7], functions, buffer_global)
     _code(sections[10], len(functions))
 
 
@@ -206,7 +232,9 @@ def build(sdk: Path, output: Path) -> None:
             *(f"-mno-{feature}" for feature in FEATURES_OFF),
             "-I", str(ROOT / "guest-sdk" / "include"),
             str(ROOT / "examples" / "counter" / "counter.c"),
+            str(ROOT / "guest-sdk" / "src" / "econtainer_guest.c"),
             "-Wl,--no-entry",
+            "-Wl,--export=econtainer_event_buffer",
             *(f"-Wl,--export={name}" for name in EXPORT_TYPES),
             f"-Wl,--initial-memory={MEMORY_PAGES * PAGE_BYTES}",
             f"-Wl,--max-memory={MEMORY_PAGES * PAGE_BYTES}",

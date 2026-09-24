@@ -8,8 +8,9 @@
 #include "wasm_export.h"
 
 #if WASM_ENABLE_FAST_INTERP != 0 || WASM_ENABLE_CUSTOM_NAME_SECTION != 0 || \
-    WASM_ENABLE_LOAD_CUSTOM_SECTION != 0 || WASM_ENABLE_DEBUG_INTERP != 0
-#error "Container section loader requires Classic bytecode and no retained custom sections"
+    WASM_ENABLE_LOAD_CUSTOM_SECTION != 0 || WASM_ENABLE_DEBUG_INTERP != 0 || \
+    WASM_ENABLE_SHRUNK_MEMORY != 0
+#error "Container requires Classic bytecode, standard pages and no retained custom sections"
 #endif
 
 #include <stdbool.h>
@@ -44,6 +45,8 @@ struct econtainer_runtime {
     wasm_function_inst_t init_function;
     wasm_function_inst_t event_function;
     wasm_function_inst_t stop_function;
+    uint32_t event_buffer_offset;
+    uint8_t *event_buffer;
     NativeSymbol native_symbols[4];
     uint32_t native_count;
     uint8_t *pending_log;
@@ -68,8 +71,8 @@ static bool limits_valid(const econtainer_runtime_limits_t *limits)
 {
     return limits != NULL && limits->max_wasm_bytes > 0 &&
            limits->max_memory_pages == 1 && limits->stack_size_bytes > 0 &&
-           limits->heap_size_bytes > 0 && limits->max_event_bytes > 0 &&
-           limits->max_event_bytes <= limits->heap_size_bytes &&
+           limits->max_event_bytes > 0 &&
+           limits->max_event_bytes <= ECONTAINER_EVENT_BUFFER_BYTES &&
            (limits->allowed_capabilities & (uint32_t)~ECONTAINER_CAP_ALL) == 0 &&
            (limits->allowed_capabilities & ECONTAINER_CAP_LOG
                 ? limits->max_log_bytes > 0 && limits->max_log_bytes <= 256
@@ -103,13 +106,14 @@ static bool function_type_matches(wasm_func_type_t type, uint32_t param_count)
 static bool module_abi_matches(wasm_module_t module)
 {
     const int32_t count = wasm_runtime_get_export_count(module);
-    if (count != 4) {
+    if (count != 5) {
         return false;
     }
     bool init_found = false;
     bool event_found = false;
     bool stop_found = false;
     bool memory_found = false;
+    bool buffer_found = false;
     for (int32_t index = 0; index < count; ++index) {
         wasm_export_t export_type;
         wasm_runtime_get_export_type(module, index, &export_type);
@@ -145,11 +149,45 @@ static bool module_abi_matches(wasm_module_t module)
             }
             memory_found = true;
         }
+        else if (strcmp(export_type.name, "econtainer_event_buffer") == 0) {
+            if (buffer_found || export_type.kind != WASM_IMPORT_EXPORT_KIND_GLOBAL ||
+                export_type.u.global_type == NULL ||
+                wasm_global_type_get_valkind(export_type.u.global_type) != WASM_I32 ||
+                wasm_global_type_get_mutable(export_type.u.global_type)) {
+                return false;
+            }
+            buffer_found = true;
+        }
         else {
             return false;
         }
     }
-    return init_found && event_found && stop_found && memory_found;
+    return init_found && event_found && stop_found && memory_found && buffer_found;
+}
+
+static bool bind_event_buffer(econtainer_runtime_t *runtime)
+{
+    wasm_memory_inst_t memory = wasm_runtime_get_default_memory(runtime->instance);
+    wasm_global_inst_t buffer;
+    if (memory == NULL || wasm_memory_get_cur_page_count(memory) != 1 ||
+        wasm_memory_get_max_page_count(memory) != 1 ||
+        wasm_memory_get_bytes_per_page(memory) != 65536 ||
+        !wasm_runtime_get_export_global_inst(runtime->instance,
+                                             "econtainer_event_buffer", &buffer) ||
+        buffer.kind != WASM_I32 || buffer.is_mutable || buffer.global_data == NULL) {
+        return false;
+    }
+    uint32_t offset = 0;
+    memcpy(&offset, buffer.global_data, sizeof(offset));
+    /* Subtraction keeps negative i32 bit patterns and integer wrap out. */
+    if (offset == 0 || offset > 65536U - ECONTAINER_EVENT_BUFFER_BYTES ||
+        !wasm_runtime_validate_app_addr(runtime->instance, offset,
+                                        ECONTAINER_EVENT_BUFFER_BYTES)) {
+        return false;
+    }
+    runtime->event_buffer = wasm_runtime_addr_app_to_native(runtime->instance, offset);
+    runtime->event_buffer_offset = offset;
+    return runtime->event_buffer != NULL;
 }
 
 static void release_runtime(econtainer_runtime_t *runtime)
@@ -509,7 +547,7 @@ econtainer_runtime_result_t econtainer_runtime_open(const uint8_t *wasm,
     }
     InstantiationArgs args = {
         .default_stack_size = limits->stack_size_bytes,
-        .host_managed_heap_size = limits->heap_size_bytes,
+        .host_managed_heap_size = 0,
         .max_memory_pages = 0, /* raw Wasm memory limits were checked above */
     };
     runtime->instance = wasm_runtime_instantiate_ex(runtime->module, &args,
@@ -517,6 +555,10 @@ econtainer_runtime_result_t econtainer_runtime_open(const uint8_t *wasm,
     if (runtime->instance == NULL) {
         release_runtime(runtime);
         return ECONTAINER_RUNTIME_ENGINE_FAILURE;
+    }
+    if (!bind_event_buffer(runtime)) {
+        release_runtime(runtime);
+        return ECONTAINER_RUNTIME_BAD_ABI;
     }
     runtime->environment = wasm_runtime_create_exec_env(runtime->instance,
                                                          limits->stack_size_bytes);
@@ -634,18 +676,10 @@ static econtainer_runtime_result_t call_event(econtainer_runtime_t *runtime,
         (event_size_bytes > 0 && event == NULL)) {
         return ECONTAINER_RUNTIME_INVALID_INPUT;
     }
-    uint64_t offset = 0;
+    uint32_t offset = 0;
     if (event_size_bytes > 0) {
-        void *guest_address = NULL;
-        offset = wasm_runtime_module_malloc(runtime->instance, event_size_bytes,
-                                            &guest_address);
-        if (offset == 0 || offset > UINT32_MAX || guest_address == NULL) {
-            if (offset != 0) {
-                wasm_runtime_module_free(runtime->instance, offset);
-            }
-            return ECONTAINER_RUNTIME_NO_MEMORY;
-        }
-        memcpy(guest_address, event, event_size_bytes);
+        offset = runtime->event_buffer_offset;
+        memcpy(runtime->event_buffer, event, event_size_bytes);
     }
     uint32_t arguments[2] = {(uint32_t)offset, (uint32_t)event_size_bytes};
     int32_t result = 0;
@@ -653,7 +687,8 @@ static econtainer_runtime_result_t call_event(econtainer_runtime_t *runtime,
         runtime, runtime->event_function, runtime->limits.event_instruction_budget,
         2, arguments, &result);
     if (offset != 0) {
-        wasm_runtime_module_free(runtime->instance, offset);
+        /* Serialized borrowing ends on every return, including traps. */
+        memset(runtime->event_buffer, 0, event_size_bytes);
     }
     if (status == ECONTAINER_RUNTIME_OK) {
         *guest_result = result;

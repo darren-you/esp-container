@@ -28,6 +28,8 @@ def name(value: str) -> bytes:
 def module(imports: tuple[str, ...] = (), *, event_type: int = 1,
            memory_flags: int = 1, memory_pages: int = 1, memory_max: int = 1,
            duplicate_export: bool = False, code_count: int = 3,
+           buffer_global: bytes = b"\x7f\x00\x41\x80\x08\x0b",
+           buffer_index: int = 0, export_buffer: bool = True,
            extra: bytes = b"") -> bytes:
     type_by_name = {"monotonic_ms": 2, "log": 1,
                     "timer_start": 3, "timer_cancel": 4}
@@ -41,6 +43,8 @@ def module(imports: tuple[str, ...] = (), *, event_type: int = 1,
                 ("econtainer_on_event", 0, len(imports) + 1),
                 ("econtainer_stop", 0, len(imports) + 2),
                 ("memory", 2, 0)]
+    if export_buffer:
+        exported.append(("econtainer_event_buffer", 3, buffer_index))
     if duplicate_export:
         exported[1] = ("econtainer_init", 0, len(imports) + 1)
     exports = leb(len(exported)) + b"".join(
@@ -50,4 +54,5 @@ def module(imports: tuple[str, ...] = (), *, event_type: int = 1,
     return (HEADER + section(1, TYPES) +
             (section(2, imported) if imports else b"") +
             section(3, function_types) + section(5, memory) +
+            section(6, b"\x01" + buffer_global) +
             section(7, exports) + section(10, code) + extra)

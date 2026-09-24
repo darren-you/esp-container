@@ -77,6 +77,21 @@ class CounterGuestTest(unittest.TestCase):
         with self.assertRaisesRegex(counter_guest.GuestError, "固定 64 KiB"):
             counter_guest.check_wasm(changed)
 
+    def test_global_addresses_use_signed_leb(self) -> None:
+        # Both stack top and buffer offset are i32.const, including padded LEB.
+        valid_stack = b"\x7f\x01\x41\x80\x20\x0b"
+        valid_buffer = b"\x7f\x00\x41\x90\x20\x0b"
+        for negative in (b"\x7f", b"\xff\x7f", b"\xff\xff\xff\xff\x7f"):
+            with self.assertRaisesRegex(counter_guest.GuestError, "栈指针"):
+                counter_guest._global(b"\x02\x7f\x01\x41" + negative + b"\x0b" + valid_buffer)
+            with self.assertRaisesRegex(counter_guest.GuestError, "事件区"):
+                counter_guest._global(b"\x02" + valid_stack + b"\x7f\x00\x41" + negative + b"\x0b")
+        self.assertEqual(counter_guest._global(
+            b"\x02" + valid_stack + b"\x7f\x00\x41\x90\xa0\x80\x80\x00\x0b"), 1)
+        with self.assertRaisesRegex(counter_guest.GuestError, "有符号整数溢出"):
+            counter_guest._global(b"\x02" + valid_stack +
+                                  b"\x7f\x00\x41\x80\x80\x80\x80\x08\x0b")
+
     def test_rejects_feature_section_and_automatic_start(self) -> None:
         feature_name = b"target_features"
         custom = b"\x00" + bytes((len(feature_name) + 1, len(feature_name))) + feature_name
