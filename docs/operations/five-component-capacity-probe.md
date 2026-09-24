@@ -1,5 +1,7 @@
 # 五组件 C3/4 MiB 仓外容量原型：2026-09-23
 
+最新 Base、FRP、MQTT、OTA、Container 和 SDK 精确提交的签名镜像、64 KiB guest QEMU 堆数据及当前 4 MiB 几何复测见[五组件 QEMU 容量切片](five-component-qemu-capacity-probe.md)末节。本页以下旧组合的镜像摘要与动态数据不可替代该复测；P6-03 仍未验收。
+
 ## 2026-09-24 Base v3 与真实 provider 静态复测
 
 仓外复制公开 `esp-base@56bf1356e0d4b2924ff61a6f333b80e1b34aac00`，保留其精确依赖 `esp-frp@9158b7f2e2c555a14636aed26b5189902152d19e`、`esp-mqtt@9cac455b0184420353ff0283df3f100abaac3e6b`、`esp-ota@bed5709fe517f62d60f2efad95491bc66756a42c`，加入公开 `esp-container@7f12e19022b9fd7632678d6865c5d1a5255799e6` 和其中精确锁定的 WAMR fork `a34d721b630213f59fde0b40cebbb980903660e8`。固定 SDK 仍为 `esp-idf@855937cf9dcee13ee9c423fb0319238cdc8d53fd` / `esp-lwip@2758df4cd3666b3b2a5b53830148379326425c0d`。Component Manager 重新解析的锁文件分别显示 FRP、MQTT、OTA 和 WAMR 的上述完整提交；Container 作为仓外本地组件加入，仅用于容量探针，不构成 Base 的正式依赖。

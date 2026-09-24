@@ -97,3 +97,35 @@ GDB 在两次实例化的 `wasm_allocate_linear_memory` 都读到单次连续申
 ## 后续边界
 
 真实 C3 板卡、ADC2 校准、Wi-Fi 连接与 TLS、FRPS/Broker 并发、已签名组合镜像、业务包 Flash 安装与三槽保护、持续运行及分区迁移尚未覆盖。完成 P6-03 仍须用实际五能力装配和真实网络负载测量峰值 heap、最大连续块、栈、socket/计时器，并核对 4 MiB 分区与保留身份数据。此次仿真结果不授权设备写入，也不要求修改既有 guest 限额或删减安全能力。
+
+## 2026-09-24：新版精确锁的签名镜像与 64 KiB guest 复测
+
+前节的 `14,660` 字节 free heap 来自旧锁，**不能作为本节组合的当前数值**。本次从公开仓检出 Base `31f5ebcc0bbc756fe5e78cb7c53f9042832ce286`、Container `00c788e05d63df5279c3ca0383a778513b973601`，使用 Base 已锁的 MQTT `5bff093646d8db810d64c50c39edc004e78bf40c`、OTA `3c3f72b823ce856b02f838fef17db1368e6d5448`，并在**仓外副本**将 Base 清单和 `dependencies.lock` 的 FRP 从 `3a40a2c` 更新到最新 `c5fbe40920ae35bceeaf3d086ad9cd9740ebbb65`。FRP 该提交只增加独立 C3 QEMU 测试及文档，不改变客户端源码；此组合是最新 FRP 候选，尚非 Base 已发布的精确依赖锁。SDK 为公开 ESP-IDF `578cf89c343e388db43ba1f4ddcd602fedcb763c`、lwIP `2758df4cd3666b3b2a5b53830148379326425c0d`，WAMR 仍为 `a34d721b630213f59fde0b40cebbb980903660e8`。Base 和 Container 的 `check_sdk.py` 均通过。官方 QEMU 仍是 `esp_develop_9.2.2_20260417`，二进制 SHA-256 `3e38982c1ea3e750edfc8c910a0fd44727fe07d9c666b84d18d2b7985ac58246`。
+
+实验目录 `/private/tmp/esp-capacity-current-lock.6WZjJt` 内的 Base 与 Container 均是独立 clone，未修改物理工作区。沿用前节 437 字节、初始和最大各 1 页的 counter guest（SHA-256 `629a44e6b83c541224e8e6b7253142da61b9887790ac36e36d972591deded31f`），在 Base 初始化前和 READY 后各运行一次真实 WAMR Classic `open → init → on_event → stop → close`。运行限额仍为 4 KiB 宿主管理 heap、4 KiB 栈、8 KiB pthread 栈、每入口 1000 条指令；因当前 Container API 新增入口期限必填字段，仓外探针显式设置 `max_entry_duration_ms=1000`。Container 以本地组件目录参与同一 IDF 工程；不可执行的 `volatile` 链接门保留 FRP、MQTT、OTA、Container 的代表性入口，map 复核 `efrp_tls_step`、`esp_mqtt_client_start`、`eota_preflight`、`econtainer_runtime_open`、`wasm_interp_call_wasm`。FRP/MQTT/OTA **仅被链接**，没有连接 FRPS/Broker 或执行下载；Container 仍未接入 Base 主应用的产品包运行链路。
+
+为取得 QEMU 串口日志，仓外 `sdkconfig` 选择 UART0 主控制台和 USB 次控制台，并以临时 `adc2_cal_include` 空实现跳过 QEMU 不支持的 ADC2 校准构造函数；因此镜像**不可刷实板**。使用仓外新建 RSA-3072 测试键签名，`python -m espsecure verify-signature --version 2 --keyfile <测试键> <签名镜像>` 验证第 0 块 RSA 通过，密钥没有进入仓库。`idf.py build` 和 `idf.py qemu --qemu-extra-args=-no-reboot` 使用同一固定 IDF，QEMU 在第二次探针完成后由宿主主动终止。QEMU 运行日志 SHA-256 为 `7420c317575cc44a11e842e237f91fba98bbce0f5439f66a793ed94e23a0a218`；签名镜像为 `0x121000`（1,183,744 字节），SHA-256 `4802b6535ca0c001e5fb1c3e037dd625cfc79f348c8d8e2fd446fe50da506fb2`。
+
+| 阶段 | 8-bit free 字节 | 最大连续块字节 | 启动以来低水位字节 |
+| --- | ---: | ---: | ---: |
+| Base 初始化前，首次 `open` 前 | 151,088 | 114,688 | 151,088 |
+| 首次 guest 存活、事件调用后 | 68,960 | 40,960 | 68,960 |
+| 首次 `close` 后、pthread 尚未回收 | 150,984 | 114,688 | 68,960 |
+| `ESP_BASE_READY` 后 | 101,716 | 90,112 | 49,652 |
+| 再次 `open` 前、pthread 已创建 | 93,352 | 81,920 | 49,652 |
+| 再次 guest 存活、事件调用后 | **11,328** | **7,680** | **11,328** |
+| 再次 `close` 后、pthread 尚未回收 | 93,352 | 81,920 | 11,328 |
+| pthread 回收后 | 101,716 | 90,112 | 11,328 |
+
+两次均输出 `open=0 init=0 event=0 stop=0 guest=3`；卸载后 free 与最大块回到各自调用前。旧锁的 14,660 字节 free 在本次降至 **11,328**，最大块恰仍为 **7,680**。`min_since_boot` 是启动以来的低水位，不会因卸载回升。该读数是无 Wi-Fi 配置、无 FRPS/Broker 会话、无 OTA 下载的 QEMU 切片，不代表真实射频与并发负载。当前 FRP 源码的 `efrp_session_create` 仍对 AEAD 接收记录单次 `calloc` **65,552** 字节；在 guest 存活的这一时刻，仅该请求就比剩余 free 多 **54,224** 字节、比最大连续块多 **57,872** 字节，还未计入 FRP 会话对象、TLS、MQTT 等开销。调整分配顺序无法由此证明并发可行；在 Base READY 的 101,716 字节 free 上，WAMR 同一版本已观测到的 69,632 字节线性内存申请加 AEAD 接收记录至少需 135,184 字节，单这两块就缺 33,468 字节，未计 pthread 与运行元数据。该缺口是本 QEMU 切片的下界，不是实板预算或产品限额。
+
+同时用这份**当前签名镜像**复核 4 MiB 分区几何。现行 Base CSV 的两个 `0x1e0000` app 槽已经占满 `0x20000..0x3e0000`，没有任何产品包分区。保留原 NVS、otadata、phy、coredump、`base_store` 和两 app 回退关系，仓外临时 CSV 经固定 IDF `gen_esp32part.py --flash-size 4MB --secure v2` 与 `check_sizes.py` 验证：
+
+| 仅供几何裁决的临时布局 | 两个 app 槽各 | 三个等大包槽各 | 当前 app 增长余量 | 尾部未分配 |
+| --- | ---: | ---: | ---: | ---: |
+| 当前镜像等大包槽几何上限 | `0x121000` | `0x7f000`（520,192 字节） | **0** | `0x1000` |
+| 保留 app 增长空间的候选 | `0x140000` | `0x60000`（393,216 字节） | `0x1f000`（126,976 字节） | `0x20000` |
+
+本仓主机工具仍接收最多 512 KiB Wasm。将本轮有效 64 KiB counter 模块以合法自定义 section 填充到 524,288 字节，再使用当前 `product_package.py` 和仓外测试键执行 `manifest → sign → pack → verify`，所得 manifest 为 550 字节、签名为 384 字节、`product.pkg` 为 **532,480 字节**（SHA-256 `b0d84c8c245f91c962a66c651b37cc74e19f1e4bbd3de8bfc51ead24849abc78`）。它比无 app 余量的几何上限包槽多 **12,288** 字节，比保留增长空间的包槽多 **139,264** 字节。若保留 512 KiB 可接受 Wasm、两个当前签名 app 和所有既有保留区，单按字节总量就超出 4 MiB **32,768** 字节；在本次已验证的三等槽布局中，每槽又比该实包少 12,288 字节，三个槽合计缺口为 36,864 字节，布局末尾另有 4,096 字节未分配。两种口径都尚未计入未来固件增长；此算术不是可实施迁移方案。没有据此调低包大小上限、删除回退、削减 TLS/FRP 协议能力或修改产品分区。
+
+P6-03 仍未验收。签名、静态链接、无网络 QEMU 与临时分区 CSV 均不能替代真实同板 Wi-Fi/TLS、FRPS/Broker/OTA/guest 并发、三包槽完整写入恢复和保留数据迁移验证；本轮不冻结客体内存、包槽、固件大小或设备写入目标。
