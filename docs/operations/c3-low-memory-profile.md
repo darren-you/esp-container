@@ -17,6 +17,8 @@
 
 固定 wasi-sdk 33 生成的单页 counter 为 **437 字节**，SHA-256 为 `629a44e6b83c541224e8e6b7253142da61b9887790ac36e36d972591deded31f`；旧两页产物同为 437 字节，SHA-256 为 `1896ae9ed2390bd4fb71af9d50965533a679245806c9c07675d65b81be42c91c`。因此这项变更解决的是单实例 RAM 申请，**没有为 4 MiB Flash 的双固件或三业务包槽增加实质空间**。512 KiB Wasm 字节上限仍是扫描器上限，不是 C3 可安装包槽容量。
 
+运行期另有独立 RAM 上界：`econtainer_runtime_open` 对完整 Wasm 先执行 `malloc(wasm_size_bytes)` 和复制，然后交给 Classic/Normal `wasm_runtime_load`；锁定 WAMR 的接口要求输入缓冲可写，并持续有效至 `wasm_runtime_unload`。现有私有入口没有直接从 Flash 分段加载或只读映射的路径。当前五组件 Base READY 仅有 101,716 字节空闲堆；Base 的 C3 小内存分支复测也只有 124,924 字节，且这些数值还未建立网络会话或支付完整 guest 初始化内存。因此即使某个大包在 Flash 三槽几何上放得下，也不能据此宣称同大小 Wasm 可被当前运行期加载。可接受 Wasm 字节上限须由真实模块的加载、运行和完整网络峰值共同确定。
+
 ## 本分支验证
 
 从公开 `esp-container master@77155349795f3b6564e6f6fbbacb61e884e583ad` 创建独立 `codex/c3-low-memory` 分支。固定 wasi-sdk 33 下，Python unittest **19/19** 通过；公开 WAMR fork `a34d721b630213f59fde0b40cebbb980903660e8` 的 Classic/Normal loader、指令计量主机 CTest **8/8** 通过，`runtime_instance` 在一次期限负例的宿主耗时波动被修正后额外连续通过三次。固定 ESP-IDF fork `578cf89c343e388db43ba1f4ddcd602fedcb763c` 与 esp-lwip `2758df4cd3666b3b2a5b53830148379326425c0d` 的 C3 独立样例完成 SDK 锁检查及 `idf.py build`，生成 app `0x39360` 字节。这个原样样例没有读取新 counter，也没有执行本分支私有运行期；实际一页 guest 调用由锁定 WAMR 主机测试和既有仓外 QEMU 切片分别覆盖。没有在本分支刷写物理设备。
