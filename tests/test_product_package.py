@@ -26,7 +26,7 @@ SPEC = {
     "required_capabilities": [],
     "runtime_profile": "wamr-classic-v1",
     "limits": {
-        "memory_limit_bytes": 131072,
+        "memory_limit_bytes": 65536,
         "stack_limit_bytes": 4096,
         "event_queue_limit": 8,
         "instruction_budget": 100000,
@@ -90,12 +90,12 @@ class ProductPackageTest(unittest.TestCase):
         manifest = pkg.create_manifest(SPEC, WASM)
         signature = bytes(range(256)) + bytes(range(128))
         package = pkg.pack(manifest, signature, WASM, max_wasm_bytes=1024)
-        self.assertEqual(len(manifest), 547)
+        self.assertEqual(len(manifest), 546)
         self.assertEqual(hashlib.sha256(manifest).hexdigest(),
-                         "5129170a730993186446ddbf2e61d1ee4bb75aeaeeab61e5a81c9a6a9f7cdd7b")
+                         "e171dcdd96587b2ebe31bd18a7c83b13fc764b9eeb37ed46c763d4fc7df6bd5e")
         self.assertEqual(len(package), 10240)
         self.assertEqual(hashlib.sha256(package).hexdigest(),
-                         "3030f9ff99f35f6ad0f3d4b00f9baf03a51bf3f17122c46e1ce26271362fd1e2")
+                         "8030e8209753cf24fe16581483dd9c590ab6260282bed4fa59b4f348afb7c562")
         self.assertEqual(pkg.unpack(package, max_wasm_bytes=1024),
                          (manifest, signature, WASM))
 

@@ -13,8 +13,8 @@ import tempfile
 from io import BytesIO
 from pathlib import Path
 
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import product_package as pkg  # noqa: E402
@@ -24,14 +24,21 @@ from wasm_fixture import HEADER, TYPES, leb, module, name, section  # noqa: E402
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = json.loads((ROOT / "examples/counter/spec.example.json").read_text())
 def signed_package(private: Path, wasm: bytes,
-                   spec: dict[str, object]) -> bytes:
+                   spec: dict[str, object], *, validate_host: bool = True) -> bytes:
     record = copy.deepcopy(spec)
     record.update(package_format_version=1, signature_algorithm=pkg.SIGNATURE_ALGORITHM,
                   payload={"path": "app.wasm", "size_bytes": len(wasm),
                            "sha256": hashlib.sha256(wasm).hexdigest()})
     manifest = pkg._json_bytes(record)
-    pkg._manifest(manifest)
-    signature = pkg.sign_manifest(manifest, private, "test-key")
+    if validate_host:
+        pkg._manifest(manifest)
+        signature = pkg.sign_manifest(manifest, private, "test-key")
+    else:
+        # Test a cryptographically valid manifest that the host now refuses.
+        key = serialization.load_pem_private_key(private.read_bytes(), password=None)
+        signature = key.sign(pkg.DOMAIN + manifest,
+                             padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=32),
+                             hashes.SHA256())
     output = BytesIO()
     with tarfile.open(fileobj=output, mode="w:", format=tarfile.USTAR_FORMAT) as archive:
         for filename, content in zip(pkg.MEMBERS, (manifest, signature, wasm), strict=True):
@@ -54,9 +61,11 @@ def main() -> None:
         package_path = root / "product.pkg"
 
         def run(wasm: bytes, spec: dict[str, object] = SPEC, *, grant: int = 3,
-                max_memory: int = 131072, expected: int = 0,
-                fail_at: int | None = None, flip_at: int | None = None) -> None:
-            package_path.write_bytes(signed_package(private, wasm, spec))
+                max_memory: int = 65536, expected: int = 0,
+                fail_at: int | None = None, flip_at: int | None = None,
+                validate_host: bool = True) -> None:
+            package_path.write_bytes(signed_package(
+                private, wasm, spec, validate_host=validate_host))
             args = [str(binary), str(package_path), str(public), "test-key",
                     "524288", str(grant), str(max_memory)]
             if fail_at is not None or flip_at is not None:
@@ -96,7 +105,7 @@ def main() -> None:
         pkg.create_manifest(both_spec, both)
         run(both, both_spec)
         run(both, both_spec, grant=1, expected=3)
-        run(both, both_spec, max_memory=65536, expected=3)
+        run(both, both_spec, max_memory=65535, expected=1)
         run(both, SPEC, expected=1)
         timer = module(("timer_start", "timer_cancel"))
         timer_spec = copy.deepcopy(SPEC)
@@ -117,13 +126,21 @@ def main() -> None:
             pass
         run(wrong_timer, timer_spec, grant=4, expected=2)
         too_little_memory = copy.deepcopy(SPEC)
-        too_little_memory["limits"]["memory_limit_bytes"] = 65536
+        too_little_memory["limits"]["memory_limit_bytes"] = 65535
         try:
             pkg.create_manifest(too_little_memory, none)
             raise AssertionError("host accepted a Wasm memory maximum above the signed limit")
         except pkg.PackageError:
             pass
-        run(none, too_little_memory, expected=1)
+        run(none, too_little_memory, expected=1, validate_host=False)
+        old_manifest_memory = copy.deepcopy(SPEC)
+        old_manifest_memory["limits"]["memory_limit_bytes"] = 131072
+        try:
+            pkg.create_manifest(old_manifest_memory, none)
+            raise AssertionError("host accepted the old two-page signed limit")
+        except pkg.PackageError:
+            pass
+        run(none, old_manifest_memory, expected=1, validate_host=False)
         too_much_stack = copy.deepcopy(SPEC)
         too_much_stack["limits"]["stack_limit_bytes"] = 8192
         run(none, too_much_stack, expected=3)
@@ -154,7 +171,7 @@ def main() -> None:
 
         # These bytes used to pass the old host shape check, but the signed
         # device scanner rejects the same modules before activation.
-        memory_section = section(5, b"\x01\x01\x02\x02")
+        memory_section = section(5, b"\x01\x01\x01\x01")
         code_section = section(10, b"\x03" + b"\x04\0\x41\0\x0b" * 3)
         deterministic_rejections = (
             ("target_features", module(extra=section(0, name("target_features"))), 2),
@@ -165,7 +182,7 @@ def main() -> None:
                                            section(2, b"") + section(3, b"\x03\0\x01\0"), 1), 1),
             ("entry_signature", module(event_type=0), 1),
             ("code_count", module(code_count=2), 1),
-            ("memory_limit", module(memory_max=3), 1),
+            ("old_two_page_guest", module(memory_pages=2, memory_max=2), 1),
         )
         for label, wasm, result in deterministic_rejections:
             try:

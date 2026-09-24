@@ -27,7 +27,7 @@ int32_t econtainer_on_event(const uint8_t *bytes, uint32_t size_bytes)
     }
     if (bytes[0] == 'R') {
         volatile uint32_t total = 0;
-        for (uint32_t index = 0; index < 2000000U; ++index) total += index;
+        for (uint32_t index = 0; index < 20000000U; ++index) total += index;
         return total != 0U ? 0 : -4;
     }
     return -1;

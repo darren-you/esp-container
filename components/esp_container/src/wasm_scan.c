@@ -241,7 +241,7 @@ bool econtainer_wasm_imported_capabilities(const uint8_t *wasm, size_t size_byte
 bool econtainer_wasm_memory_within_limit(const uint8_t *wasm, size_t size_bytes,
                                          uint32_t max_memory_pages)
 {
-    if (max_memory_pages == 0 ||
+    if (max_memory_pages != 1 ||
         econtainer_wasm_check(wasm, size_bytes) != ECONTAINER_WASM_OK) {
         return false;
     }

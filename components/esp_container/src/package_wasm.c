@@ -470,7 +470,7 @@ econtainer_package_wasm_result_t econtainer_package_wasm_check(
         verified_info->wasm_size_bytes >
             verified_info->package_size_bytes - verified_info->wasm_offset_bytes ||
         (verified_info->requested_capabilities & (uint32_t)~ECONTAINER_CAP_ALL) != 0 ||
-        verified_info->memory_limit_bytes < WASM_PAGE_BYTES ||
+        verified_info->memory_limit_bytes != WASM_PAGE_BYTES ||
         verified_info->stack_limit_bytes == 0 ||
         (authorization->allowed_capabilities & (uint32_t)~ECONTAINER_CAP_ALL) != 0 ||
         authorization->max_memory_bytes < WASM_PAGE_BYTES ||

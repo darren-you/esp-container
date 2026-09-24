@@ -16,7 +16,7 @@ wasi-libc: 161b3195fc25
 llvm: 4434dabb6991
 llvm-version: 22.1.0
 config: f992bcc08219"""
-MEMORY_PAGES = 2
+MEMORY_PAGES = 1
 PAGE_BYTES = 65536
 STACK_BYTES = 4096
 EXPORT_TYPES = {
@@ -112,7 +112,7 @@ def _memory(data: bytes) -> None:
     if (reader.u32(), reader.u32(), reader.u32(), reader.u32()) != (
         1, 1, MEMORY_PAGES, MEMORY_PAGES
     ):
-        raise GuestError("counter 内存必须为非共享、固定 128 KiB")
+        raise GuestError("counter 内存必须为非共享、固定 64 KiB")
     reader.end()
 
 

@@ -24,6 +24,7 @@ MEMBERS = ("manifest.json", "signature.bin", "app.wasm")
 MANIFEST_MAX_BYTES = 4096
 SIGNATURE_BYTES = 384
 DEVICE_MAX_WASM_BYTES = 512 * 1024  # Device scanner bound; C3 slot capacity needs P6-03.
+DEVICE_MEMORY_BYTES = 65536  # C3 single-page guest profile; includes signed limit.
 DEFAULT_MAX_WASM_BYTES = DEVICE_MAX_WASM_BYTES
 IDENTIFIER = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
@@ -100,6 +101,8 @@ def _manifest(data: bytes) -> dict[str, object]:
         lower = 0 if key == "storage_limit_bytes" else 1
         if type(number) is not int or not lower <= number <= 0xFFFFFFFF:
             raise PackageError(f"非法限制：{key}")
+    if limits["memory_limit_bytes"] != DEVICE_MEMORY_BYTES:
+        raise PackageError("C3 guest 清单内存限额必须为固定 64 KiB")
     payload = value["payload"]
     if not isinstance(payload, dict) or set(payload) != {"path", "size_bytes", "sha256"}:
         raise PackageError("非法 payload 字段")
@@ -244,7 +247,7 @@ def _wasm_memory(data: bytes, max_memory_bytes: int) -> None:
     count, flags, minimum, maximum = (reader.u32() for _ in range(4))
     reader.finish()
     if count != 1 or flags != 1 or minimum == 0 or minimum > maximum or (
-            maximum > max_memory_bytes // 65536):
+            maximum > min(max_memory_bytes, DEVICE_MEMORY_BYTES) // 65536):
         raise PackageError("Wasm 内存超出当前 profile 或清单限额")
 
 

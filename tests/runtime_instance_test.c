@@ -24,7 +24,7 @@
 
 static const econtainer_runtime_limits_t limits = {
     .max_wasm_bytes = 512 * 1024,
-    .max_memory_pages = 2,
+    .max_memory_pages = 1,
     .stack_size_bytes = 4096,
     .heap_size_bytes = 4096,
     .max_event_bytes = 128,
@@ -232,7 +232,8 @@ static bool test_event_allocation_failure(const char *path)
     return true;
 }
 
-static bool test_wrong_abi_and_release(const char *wrong_path, const char *counter_path)
+static bool test_wrong_abi_and_release(const char *wrong_path, const char *counter_path,
+                                       const char *two_page_path)
 {
     size_t length = 0;
     uint8_t *bytes = read_file(wrong_path, &length);
@@ -241,12 +242,19 @@ static bool test_wrong_abi_and_release(const char *wrong_path, const char *count
     CHECK(econtainer_runtime_open(bytes, length, &limits, &runtime) == ECONTAINER_RUNTIME_BAD_ABI);
     CHECK(runtime == NULL);
     free(bytes);
+    bytes = read_file(two_page_path, &length);
+    CHECK(bytes != NULL);
+    CHECK(econtainer_wasm_check(bytes, length) == ECONTAINER_WASM_OK);
+    CHECK(econtainer_runtime_open(bytes, length, &limits, &runtime) ==
+          ECONTAINER_RUNTIME_BAD_ABI);
+    CHECK(runtime == NULL);
+    free(bytes);
     bytes = read_file(counter_path, &length);
     CHECK(bytes != NULL);
     econtainer_runtime_limits_t too_small = limits;
-    too_small.max_memory_pages = 1;
+    too_small.max_memory_pages = 2;
     CHECK(econtainer_runtime_open(bytes, length, &too_small, &runtime) ==
-          ECONTAINER_RUNTIME_BAD_ABI);
+          ECONTAINER_RUNTIME_INVALID_INPUT);
     CHECK(runtime == NULL);
     too_small = limits;
     too_small.init_instruction_budget = 0;
@@ -746,8 +754,8 @@ static bool test_expired_entry(const char *path)
 
 int main(int argc, char **argv)
 {
-    if (argc != 11) {
-        fprintf(stderr, "usage: %s counter event-read init-loop event-loop stop-loop stop-fail wrong-signature host-api timer deadline\n",
+    if (argc != 12) {
+        fprintf(stderr, "usage: %s counter event-read init-loop event-loop stop-loop stop-fail wrong-signature host-api timer deadline two-page\n",
                 argv[0]);
         return 2;
     }
@@ -762,7 +770,7 @@ int main(int argc, char **argv)
                         test_event_allocation_failure(argv[2]) &&
                         test_loop(argv[3], 0) && test_loop(argv[4], 1) &&
                         test_loop(argv[5], 2) &&
-                        test_wrong_abi_and_release(argv[7], argv[1]) &&
+                        test_wrong_abi_and_release(argv[7], argv[1], argv[11]) &&
                         test_repeated_release(argv[1]) &&
                         test_failure_reopen(argv[1], argv[3], argv[4], argv[5], argv[6]) &&
                         test_repeated_native_release(argv[8]) &&

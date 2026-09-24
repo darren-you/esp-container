@@ -14,6 +14,24 @@ sys.path.insert(0, str(ROOT / "tools"))
 import counter_guest  # noqa: E402
 
 
+def two_page_fixture(wasm: bytes) -> bytes:
+    """Retain a structurally valid old guest to test the C3 admission cap."""
+    reader = counter_guest.Reader(wasm)
+    reader.take(8)
+    result = bytearray(wasm)
+    while reader.offset < len(wasm):
+        section = reader.byte()
+        size = reader.u32()
+        offset = reader.offset
+        reader.take(size)
+        if section == 5:
+            if wasm[offset:offset + size] != b"\x01\x01\x01\x01":
+                raise counter_guest.GuestError("counter 内存节不符合单页测试输入")
+            result[offset + 2:offset + 4] = b"\x02\x02"
+            return bytes(result)
+    raise counter_guest.GuestError("counter 缺失内存节")
+
+
 VARIANTS = {
     "event-read": None,
     "init-loop": "ECONTAINER_INIT_LOOP",
@@ -31,6 +49,8 @@ def main() -> int:
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
     counter_guest.build(args.wasi_sdk, args.output_dir / "counter.wasm")
+    (args.output_dir / "two-page.wasm").write_bytes(
+        two_page_fixture((args.output_dir / "counter.wasm").read_bytes()))
     clang = args.wasi_sdk / "bin" / "clang"
     for name, symbol in VARIANTS.items():
         command = [

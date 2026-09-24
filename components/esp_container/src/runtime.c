@@ -61,7 +61,7 @@ static uint64_t next_timer_handle = 1;
 static bool limits_valid(const econtainer_runtime_limits_t *limits)
 {
     return limits != NULL && limits->max_wasm_bytes > 0 &&
-           limits->max_memory_pages > 0 && limits->stack_size_bytes > 0 &&
+           limits->max_memory_pages == 1 && limits->stack_size_bytes > 0 &&
            limits->heap_size_bytes > 0 && limits->max_event_bytes > 0 &&
            limits->max_event_bytes <= limits->heap_size_bytes &&
            (limits->allowed_capabilities & (uint32_t)~ECONTAINER_CAP_ALL) == 0 &&

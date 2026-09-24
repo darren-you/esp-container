@@ -26,7 +26,7 @@ def name(value: str) -> bytes:
 
 
 def module(imports: tuple[str, ...] = (), *, event_type: int = 1,
-           memory_flags: int = 1, memory_max: int = 2,
+           memory_flags: int = 1, memory_pages: int = 1, memory_max: int = 1,
            duplicate_export: bool = False, code_count: int = 3,
            extra: bytes = b"") -> bytes:
     type_by_name = {"monotonic_ms": 2, "log": 1,
@@ -35,7 +35,7 @@ def module(imports: tuple[str, ...] = (), *, event_type: int = 1,
         name("econtainer") + name(field) + b"\0" + leb(type_by_name.get(field, 2))
         for field in imports)) if imports else b""
     function_types = b"\x03\0" + leb(event_type) + b"\0"
-    memory = b"\x01" + leb(memory_flags) + b"\x02" + (
+    memory = b"\x01" + leb(memory_flags) + leb(memory_pages) + (
         leb(memory_max) if memory_flags & 1 else b"")
     exported = [("econtainer_init", 0, len(imports)),
                 ("econtainer_on_event", 0, len(imports) + 1),

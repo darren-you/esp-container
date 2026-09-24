@@ -96,6 +96,7 @@ if(BUILD_TESTING)
             list(APPEND runtime_guests "${runtime_guests_dir}/host-api.wasm")
             list(APPEND runtime_guests "${runtime_guests_dir}/timer.wasm")
             list(APPEND runtime_guests "${runtime_guests_dir}/deadline.wasm")
+            list(APPEND runtime_guests "${runtime_guests_dir}/two-page.wasm")
             add_custom_command(OUTPUT ${runtime_guests}
                 COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/build_runtime_guests.py"
                     --wasi-sdk "${ESP_CONTAINER_WASI_SDK_ROOT}"

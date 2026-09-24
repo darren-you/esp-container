@@ -62,12 +62,19 @@ class CounterGuestTest(unittest.TestCase):
     def test_rejects_shared_or_unbounded_memory(self) -> None:
         changed = bytearray(self.wasm)
         offset = section_offset(changed, 5)
-        self.assertEqual(changed[offset:offset + 4], b"\x01\x01\x02\x02")
+        self.assertEqual(changed[offset:offset + 4], b"\x01\x01\x01\x01")
         changed[offset + 1] = 3
-        with self.assertRaisesRegex(counter_guest.GuestError, "固定 128 KiB"):
+        with self.assertRaisesRegex(counter_guest.GuestError, "固定 64 KiB"):
             counter_guest.check_wasm(changed)
         changed[offset + 1] = 0
-        with self.assertRaisesRegex(counter_guest.GuestError, "固定 128 KiB"):
+        with self.assertRaisesRegex(counter_guest.GuestError, "固定 64 KiB"):
+            counter_guest.check_wasm(changed)
+
+    def test_rejects_old_two_page_guest(self) -> None:
+        changed = bytearray(self.wasm)
+        offset = section_offset(changed, 5)
+        changed[offset + 2:offset + 4] = b"\x02\x02"
+        with self.assertRaisesRegex(counter_guest.GuestError, "固定 64 KiB"):
             counter_guest.check_wasm(changed)
 
     def test_rejects_feature_section_and_automatic_start(self) -> None:

@@ -199,7 +199,7 @@ int main(int argc, char **argv)
         .max_wasm_bytes = 1024,
         .wasm_authorization = {
             .allowed_capabilities = 0,
-            .max_memory_bytes = strcmp(argv[3], "memory") == 0 ? 65536U : 131072U,
+            .max_memory_bytes = strcmp(argv[3], "memory") == 0 ? 65535U : 65536U,
             .max_stack_bytes = 4096,
         },
         .max_event_queue_limit = strcmp(argv[3], "queue") == 0 ? 7U : 8U,
