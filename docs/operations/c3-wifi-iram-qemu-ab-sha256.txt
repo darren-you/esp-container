@@ -1,0 +1,19 @@
+# mac-work-1 仓外精确输入和一次构建运行的 SHA-256；不含测试私钥。
+93fb2b027f5bf8d0acae828e4812cd5665acc2803f21621ea2b7ee169051efdc  /private/tmp/esp32c3-frp-lazy-exact-20260927/probe/firmware/build/esp_base.bin
+cb4911792bf9fc1191e4dfc90ff04e483e880ed6800a455f590e594c5ce6b62d  /private/tmp/esp32c3-frp-lazy-exact-20260927/probe/firmware/sdkconfig
+4a7e8deb80dc27e277eab15e9f96fba5b45758a3b648d04bd6ef0fc14cf278b3  /private/tmp/esp32c3-frp-lazy-exact-20260927/qemu.log
+b1526168e0f0db1a21869a485bd7dc165cdfcbe37e0637ea9d9e0534bf80ea1f  /private/tmp/esp32c3-wifi-iram-off-20260927/probe/firmware/apps/esp_base/main/capacity_runtime_probe.c
+2855df4bd4199f7ce21526c33bcc0b21776adf4d6e5b9f631e43491ea9d30e20  /private/tmp/esp32c3-wifi-iram-off-20260927/probe/firmware/apps/esp_base/main/aead_4096.bin
+35979812621d6b6778c4086f937991353cfa7f73a4c1aa60dfcfc5507b2542aa  /private/tmp/esp32c3-wifi-iram-off-20260927/probe/firmware/apps/esp_base/main/aead_65536.bin
+598bad8a2cc8ff19a70c4a3d0f7d343a048bf3eb7b8d12a891eec17267a7ef6a  /private/tmp/prepare_five_component_wifi_iram_ab.py
+8d09182adc9f21f0ce05dd38bfdcba89982277404aca6399f9c87d4e60a9bbbf  /private/tmp/prepare_five_component_wifi_iram_ab_replay.py
+b9222bfaad0ca2875e6d9bcbb5ef6cb221134d40d9ca144fff9d64c4756d5247  /private/tmp/esp32c3-wifi-iram-replay-check-20260927/probe/firmware/sdkconfig
+6980ae49e0a8ce3ec8a674ecfee154f23f4585a778f4ca35a7132083b71431be  /private/tmp/esp32c3-wifi-iram-off-20260927/run_qemu.py
+230e7a60b88a59e98b4b9d4b79aa34155a739fbd2c4c9d32db8218642101909b  /private/tmp/esp32c3-wifi-iram-off-20260927/probe/firmware/sdkconfig
+63259c2444b89238187a778563a6b52f873a5448e32eb1ac5b8d10b4b3763948  /private/tmp/esp32c3-wifi-iram-off-20260927/probe/firmware/dependencies.lock
+5e5e4f5ac992d0d03a9887ea245da93570fe8d0687ba5cdb6c0553f98cbd6531  /private/tmp/esp32c3-wifi-iram-off-20260927/probe/firmware/build/esp_base-unsigned.bin
+4f1935a3898172cb3983600572e6808f11f9a3426783bd393ceeec45a258f059  /private/tmp/esp32c3-wifi-iram-off-20260927/probe/firmware/build/esp_base.bin
+ae0a6c0919fc4ee6d8d50372eb6427c9c2133682c6a561bade90a639f1ec7f99  /private/tmp/esp32c3-wifi-iram-off-20260927/build.log
+324a5fb8cbcf9daaf0d3618d58c862481d9e05c7c415f2ef2cced8a52f9e05e3  /private/tmp/esp32c3-wifi-iram-off-20260927/baseline-size.log
+f4c1f7a155767a97b6cd32306dad9115b21ace17e99328aa2de4cb3596d4d1e6  /private/tmp/esp32c3-wifi-iram-off-20260927/size.log
+d11d4e151b7c76ecf1f124e1c0811be849995e4df9f8c753a16c05e3ebf8a107  /private/tmp/esp32c3-wifi-iram-off-20260927/qemu.log

@@ -61,6 +61,8 @@ ctest --test-dir build-wamr --output-on-failure
 
 host 工具的包格式和使用步骤见 [包工具](tools/README.md)。[只读流式验包与 Wasm 静态检查切片](docs/operations/package-stream-checkpoint.md)记录设备代码与 host 互验边界；静态检查必须接收验包结果及独立可信授权，签名清单只表达需求，不能自行授予设备能力。[三包槽存储检查点](docs/operations/three-slot-storage-checkpoint.md)记录保护集、commit/读回、IDF provider 与恢复软件边界。[C3 单页切片](docs/operations/c3-low-memory-profile.md)记录本分支对 guest、清单、设备扫描与运行期的一页限制。[C3 原型](examples/c3-runtime/README.md)需要固定 SDK；原样 WAMR 2.4.4 与固定 IDF 6.1 的编译问题已在公开 fork 的源码中直接修复，具体构建结果见[开发检查点](docs/operations/development-checkpoint.md)。[五组件仓外容量原型](docs/operations/five-component-capacity-probe.md)记录签名镜像与分区几何，[QEMU counter 容量切片](docs/operations/qemu-counter-capacity-probe.md)记录独立 C3 样例的动态堆采样，[五组件链接 QEMU 容量切片](docs/operations/five-component-qemu-capacity-probe.md)记录 C3 组合读数，[ESP32 五组件签名容量探针](docs/operations/esp32-five-component-capacity-probe.md)记录旧锁的 ECDSA v1 静态镜像与候选几何，[ESP32 认证记录 QEMU 容量探针](docs/operations/esp32-authenticated-qemu-capacity-probe.md)记录新锁的单页 guest 与完整密文动态读数；这些证据均未闭合产品容量验收。本地构建不会写板。当前代码没有可发布的产品包运行/安装链路，不要把验包成功当作设备安全启动。
 
+[C3 Wi-Fi IRAM 两项开关的 QEMU 容量对照](docs/operations/c3-wifi-iram-qemu-ab.md)记录同输入实验中完整 AEAD reader 与一页 guest 的结果及实际 FRP 会话仍未闭合的内存缺口。
+
 ## 项目边界
 
 - 本仓拥有 WAMR 集成、guest ABI、包验证、实例生命周期、资源配额和三包槽机制；主机包工具现与设备流式扫描器对齐签名清单和 Wasm 字节可确定的 Classic/ABI 静态准入，另有 counter 样例编译检查。
