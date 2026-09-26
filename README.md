@@ -27,13 +27,14 @@ flowchart LR
     sdk["guest-sdk：精确导入声明"] --> runtime
     runtime --> host["单调时间 / 实例私有待取日志 / 定时器"]
     runtime --> wamr["锁定 WAMR Classic：加载 / 每入口指令预算"]
-    sample["examples/c3-runtime：独立 C3 最小工程"] --> scanner
+    sample["examples/c3-runtime / esp32-runtime：双目标独立探针"] --> scanner
     sample --> wamr
+    shared["examples/runtime-probe：共用最小运行源码"] --> sample
     idf["锁定 ESP-IDF v6.1 / esp-lwip"] --> sample
     base["esp-base：未来的平台装配与持久授权"]
 ```
 
-IDF 组件物理路径为 `components/esp_container`，其名称与仓库 `esp-container` 属不同命名空间。公开 Git 消费方须把完整提交 SHA 和 `path: components/esp_container` 写入 `idf_component.yml`。WAMR 由该组件的 manifest 固定到[公开维护 fork](docs/design/source-provenance.md) 的完整修复提交；[SDK 锁](components/esp_container/sdk-lock.json)固定公开 ESP-IDF fork `578cf89c343e388db43ba1f4ddcd602fedcb763c` 与 lwIP 源码，组件构建核对锁定组合。组件配置还要求 Classic/Normal loader、指令计量，并拒绝 WAMR 默认开启的 AOT/Fast/WASI/guest pthread/shrunk memory 等特性；消费者按[C3 样例](examples/c3-runtime/README.md)在 `project()` 前设置计量/bulk/shared/shrunk memory，且在 `sdkconfig.defaults` 设置 WAMR Kconfig。独立样例不读取相邻工作区、私有 Tool 或生产凭据。
+IDF 组件物理路径为 `components/esp_container`，其名称与仓库 `esp-container` 属不同命名空间。公开 Git 消费方须把完整提交 SHA 和 `path: components/esp_container` 写入 `idf_component.yml`。WAMR 由该组件的 manifest 固定到[公开维护 fork](docs/design/source-provenance.md) 的完整修复提交；[SDK 锁](components/esp_container/sdk-lock.json)固定公开 ESP-IDF fork `578cf89c343e388db43ba1f4ddcd602fedcb763c` 与 lwIP 源码，组件构建核对锁定组合。组件配置还要求 Classic/Normal loader、指令计量，并拒绝 WAMR 默认开启的 AOT/Fast/WASI/guest pthread/shrunk memory 等特性；消费者按 [C3 样例](examples/c3-runtime/README.md)或 [ESP32 样例](examples/esp32-runtime/README.md)在 `project()` 前设置计量/bulk/shared/shrunk memory，且在各自 `sdkconfig.defaults` 设置 WAMR Kconfig。两个样例共享同一探针源码，不读取相邻工作区、私有 Tool 或生产凭据。
 
 ## 本机验证
 
@@ -77,5 +78,7 @@ host 工具的包格式和使用步骤见 [包工具](tools/README.md)。[只读
 - [guest SDK 与 counter 编译样例](examples/counter/README.md)
 - [主机包工具](tools/README.md)
 - [C3 原型](examples/c3-runtime/README.md)
+- [ESP32-D0WD-V3 原型](examples/esp32-runtime/README.md)
+- [双目标共用运行探针](examples/runtime-probe/README.md)
 - [测试](tests/README.md)
 - [嵌入式工程标准](https://github.com/darren-you/darren-space/blob/master/harness/docs/workspace/standards/embedded_firmware/embedded_firmware_golden_path.md)

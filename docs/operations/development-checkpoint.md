@@ -1,8 +1,38 @@
-# 开发检查点：2026-09-23
+# 开发检查点
+
+## 2026-09-26 双目标独立运行探针
+
+在 `codex/c3-low-memory@0024695510e2b445bfdb089247d31f8cbd84e010` 的未提交候选上，C3 与 ESP32 样例共用 `examples/runtime-probe/main.c`，分别保留自己的 target、控制台和 `dependencies.lock`。在 mac-work-1 的仓外副本使用锁定 ESP-IDF `578cf89c343e388db43ba1f4ddcd602fedcb763c`、lwIP `2758df4cd3666b3b2a5b53830148379326425c0d` 与 WAMR `26c235e53e29acd8b43abe7f3b524577bd4d1ae5` 执行 `check_sdk.py`，再分别运行 `idf.py -C examples/c3-runtime build` 与 `idf.py -C examples/esp32-runtime build`，均完整链接。生成锁分别声明 `target: esp32c3`、`target: esp32`；ESP32 `sdkconfig` 确认为 UART0 控制台与 4 MiB Flash。
+
+初轮 C3 UART0 app 为 232368 字节，SHA-256 `5fef4fdfe55d74bd768802a6df7e9d862016e05959d0a89a934f75c4c0afb63c`；ESP32 app 为 217088 字节，SHA-256 `b23bc1c47d21291c3091d9a4cd4c35917395b3793f6320f0c2fcc4af9990802a`。两份 `compile_commands.json` 均确认唯一探针源码是 `examples/runtime-probe/main.c`，分别由 RISC-V 与 Xtensa 编译器处理。mac-ci-1 的 Python 14 项通过，`WASI_SDK_ROOT` 未设置导致 counter 编译用例跳过。mac-work-1 的官方 QEMU RISC-V 9.2.2 (`esp_develop_9.2.2_20260417`) 执行初轮 C3 UART0 镜像，正常调用返回 0，死循环得到精确指令额度异常，最终 `normal=1 instruction_limit=1`；运行前 free/largest 为 326416/188416 字节，运行后为 326312/188416 字节，无 panic。本机现有 Xtensa QEMU 没有 ESP32 机器，因此 ESP32 仅完成编译。上述软件结果不能证明两块实板的真实 WAMR 执行、堆峰值、五组件组合或新包槽布局，P6-02/P6-03 保持进行中。
+
+同日实板前置复核发现，上述 C3 构建最终 `sdkconfig` 实际选择 UART0 主控制台，只能作为 UART0 QEMU 参考，不作为只有原生 USB Serial/JTAG 端点的 C3 板候选。随后在本分支的 C3 `sdkconfig.defaults` 显式设置 USB Serial/JTAG 主控制台与无 secondary，移走旧生成 `sdkconfig`/`build` 后使用同一固定 SDK/WAMR 重新完整构建。新配置读回 `CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y`、`CONFIG_ESP_CONSOLE_SECONDARY_NONE=y`、`CONFIG_ESP_CONSOLE_UART_NUM=-1`，仍为 `esp32c3` 与 4 MiB；`dependencies.lock` 固定 WAMR `26c235e53e29acd8b43abe7f3b524577bd4d1ae5`。新 app 为 **227616 字节**，SHA-256 `182ede7194b65ccf18630b53ab845c8039f57306f686a2deb7f5a0ad278e003b`；bootloader 与分区表 SHA-256 分别为 `afe114c7d997b4af12849fb0e370b67e4a8888a12bb7a2f657dda9b2319eaee8`、`7f00b6c042a89b15b0cac534f82ed988caf29278ff5700b0c511eb1b5bb7c820`。app、bootloader、分区表、两种 flash 参数文件、最终配置与锁已传到 `mac-pro-1` 的私有 `container-c3-20260926` receipt，逐项摘要校验通过；传输本身没有设备写入。样例 `flash_args` 是单 app `0x10000` 布局，不能直接用于现有 Base 双 OTA 分区板。
+
+对新 USB 主控制台镜像执行官方 C3 QEMU 时，`-serial mon:stdio` 只见 ROM 引导、没有探针串口行，不能把它记成 WAMR 调用通过；日志 SHA-256 为 `483226d55bbdbfce11889db13ac34ae13af02f04d1947e93d3a786e2f5220b9e`。将上述仅差控制台配置的旧 UART0 参考镜像在同一 QEMU 再运行，正常返回和精确指令超额异常仍通过，`normal=1 instruction_limit=1`，运行前后 free/largest 为 326416/188416 与 326312/188416 字节；日志 SHA-256 为 `109eb1b0c04436cff77a7420effd014ec94493f84c976a9f6f9bb4a999e54789`。USB 实板的 WAMR 与资源结果须以目标端点实际串口日志另行裁决。
+
+### C3 原生 USB 实板最小探针
+
+同日于 mac-pro-1 对 P1-04 已登记的 ESP32-C3 rev0.4／4 MiB 板重新核对芯片、MAC、唯一 USB Serial/JTAG 端点、原 Base 持久身份、配置 revision 5 与当前 `ota_0@0x20000/0x1e0000`、`otadata` 的 VALID 选择。写前重新读取两份完整 4 MiB Flash，两份彼此及 P1-04 旧恢复件逐字节一致。使用上述 USB 主控制台 app `182ede7194b65ccf18630b53ab845c8039f57306f686a2deb7f5a0ad278e003b`，仅写当前 `ota_0` 的 227616 字节；esptool 写后校验与独立应用区读回均逐字节一致。没有写样例自己的 bootloader、单 app 分区表、NVS 或 eFuse，也没有操作另一块板。
+
+原生 USB 串口记录 `before free/largest=326652/188416`、正常 `run call_ok=1 result=0 exception=none`、死循环 `looping call_ok=0 ... Exception: instruction limit exceeded`、`after free/largest=326548/188416`，最终 `normal=1 instruction_limit=1`，未见 panic 或 WDT。该采样是最小探针运行前后资源值，不是执行期间峰值或完整五组件容量。
+
+实验结束从本轮恢复件全片写回并由 esptool 校验，再独立读回完整 4 MiB；读回与写前两份以及 P1-04 两份恢复件逐字节一致。复位后原 Base `status` 成功，持久身份、revision 5、config ready 与管理能力同前，boot ID 按重启更新；Wi-Fi 曾短暂处于 connecting，下一次查询回到原 disconnected。原始 Flash、MAC、UUID 和设备日志仅保存在 ESP Tool 私有 `container-c3-20260926` receipt。P6-03 的五组件负载与新包槽布局仍未验收。
+
+### ESP32-D0WD-V3 UART0 实板最小探针
+
+同日仍在 mac-pro-1，对 P1-04 已登记的另一块 ESP32-D0WD-V3 rev3.1／4 MiB 板重新核对芯片、MAC、CH340 UART 端点、原 ESP-AT `1.1.b1.0` 的 `AT+GMR`、`AT+CWMODE?` 与 `AT+CWJAP?` 只读响应，以及旧 `ota_0@0x100000/0x180000`、擦除态 `otadata` 和旧 bootloader。P1-04 旧两份完整 Flash 恢复件一致；本轮初次尝试的第二份读取因 CH340 stub 对 flash 命令报错，未写入设备，重新进入下载模式后原 AT 仍响应。改为每次明确复位进下载模式，取得本轮两份各 4 MiB、逐字节一致的完整 Flash。两份与旧归档只在原 NVS 有运行期变化，恢复使用本轮双份，不复用 C3 恢复件。
+
+同锁 ESP32 UART0 app 为 **217088 字节**，SHA-256 `b23bc1c47d21291c3091d9a4cd4c35917395b3793f6320f0c2fcc4af9990802a`；实际 `sdkconfig` 为 `esp32`、4 MiB、UART0，镜像 chip ID 0、校验和与验证哈希有效。仅写当前旧 `ota_0` 中的 app 字节，esptool 写后校验及应用区独立读回逐字节通过。没有使用样例 `flash_args` 的单 app `0x10000` 地址，也没有写样例 bootloader、分区表、NVS、eFuse 或另一块板。2017 年旧 AT bootloader 在此次受控实验中实际进入 SPI Flash 启动并运行该 IDF 6.1 app；这只证明此独立样例的实际启动，不建立新签名平台的启动基线。
+
+UART0 原始日志记录 `before free/largest=294688/163840`、正常 `run call_ok=1 result=0 exception=none`、死循环 `looping call_ok=0 ... Exception: instruction limit exceeded`、`after free/largest=294580/163840`，最终 `normal=1 instruction_limit=1`，未见 panic 或 WDT。实验结束以本轮完整恢复件写回并经 esptool 校验，再独立读回 4 MiB，与本轮两份恢复件逐字节一致；原 AT 版本仍为 `1.1.b1.0`，配置只读查询均成功且结果逐字节等于写前。原始 Flash、MAC、AT 配置和串口日志仅保存在 ESP Tool 私有 `container-esp32-20260926` receipt。
+
+两个 target 的同一共享探针源码均已在真实板上验证最小正常调用与精确指令额度异常。当前仍是 `codex/c3-low-memory@0024695510e2b445bfdb089247d31f8cbd84e010` 工作树上的未提交候选；P6-02 仍需把双目标实际消费的完整源码提交、工具链/特性/预算配置与上述制品冻结为同一可复核合同，不能把本轮实板结果自动赋予后续改动。两板的 Flash/堆数字只属于独立探针，不证明 P6-03 的五组件并发、真实业务包、三包槽或新分区。
+
+## 历史检查点
 
 当前 C3 分支的 ABI 2 页内事件区、公开 WAMR `26c235e` 与最新验证见[单页 profile 检查点](c3-low-memory-profile.md#abi-2-页内事件区与标准页边界)。以下日期与版本记录保留各自历史范围。
 
-## 已核对的软件范围
+### 已核对的软件范围
 
 | 检查 | 结果 | 边界 |
 | --- | --- | --- |
@@ -20,6 +50,6 @@
 | 官方 Espressif QEMU ESP32-C3 最小运行 | 公开 `4a37af82b44a8a4e4444a64652cee6c6e29e08eb` 的 `xTaskCreate` 探针仿真时在 `pthread_self` 断言；后续 `f013c6a8ae60e4232f1815782e72e8b174d9f790` 仍保留该入口。改用与锁定 WAMR ESP-IDF 示例一致的 joinable pthread 后，固定 IDF/lwIP 与官方 `qemu-riscv32` 9.2.2 (`esp_develop_9.2.2_20260417`) 仿真启动成功。真实 WAMR C3 日志：`before free=326416 largest=188416`；`run call_ok=1 result=0 exception=none`；`looping call_ok=0 ... Exception: instruction limit exceeded`；`after free=326312 largest=188416`；`normal=1 instruction_limit=1`。Python 9 项通过、counter 编译测试因未设置 `WASI_SDK_ROOT` 跳过，固定 WAMR 主机 CTest 2/2 通过；C3 bin 231488 字节，SHA-256 `2e93e4f42debb306224f7550929fe2cf9b67d110cfed82e35e80e8d04cd9115f` | 仅为 QEMU 仿真与本机软件证据；样例没有 Wi-Fi、FRP、MQTT、OTA、生产包和真实 Flash 布局。未刷板，不是实板堆峰值、时限或掉电行为验收 |
 | [组件私有单实例运行切片](single-instance-runtime-checkpoint.md) | 固定 wasi-sdk 33 + 锁定 WAMR host CTest 3/3；counter、事件复制与分配失败、ABI 和原始内存页拒绝、init/event/stop 各自额度异常、关闭重开通过。固定 IDF/C3 组件源码编译、原样样例链接与仓外私有 API 强制引用链接通过 | 原样样例没有调用新 API；本项仍缺 C3 新链路真运行、签名包、宿主能力、Base 装配、RAM/实板结果，P6-04/P6-07 未验收 |
 
-公开 fork 从官方 WAMR-2.4.4 精确提交直接修正三处源码：无 WASI 时不编译文件适配、明确包含 `<sys/stat.h>`、在 IDF 无可执行堆能力时拒绝执行映射并保留普通映射。构建保留 `CONFIG_ESP_SYSTEM_MEMPROT=y`，未定义虚假的 `MALLOC_CAP_EXEC`，也未修改固定 SDK 或 `managed_components`。本仓 manifest 与 `dependencies.lock` 已精确指向该公开提交；P6-02 的 C3 最小运行和指令额度异常目前已有 QEMU 仿真证据，实板运行与资源结果仍未验收。
+公开 fork 从官方 WAMR-2.4.4 精确提交直接修正三处源码：无 WASI 时不编译文件适配、明确包含 `<sys/stat.h>`、在 IDF 无可执行堆能力时拒绝执行映射并保留普通映射。构建保留 `CONFIG_ESP_SYSTEM_MEMPROT=y`，未定义虚假的 `MALLOC_CAP_EXEC`，也未修改固定 SDK 或 `managed_components`。上述为历史公开提交的检查点；当前双目标实板探针及新的 WAMR 锁以本文首节为准。
 
-当前已有只读组合链接与分区几何证据，但仍无实际 Flash 三包槽、设备流式验包、产品实例管理、真实签名包运行、C3 堆峰值和分区迁移。主计划 P6-02 及后续运行、容量任务仍未验收。
+当前已有只读组合链接与分区几何证据，但仍无实际 Flash 三包槽、设备流式验包、产品实例管理、真实签名包运行、C3 堆峰值和分区迁移。主计划 P6-02 的完整源码冻结与配置合同复核，以及后续运行、容量任务仍未验收。

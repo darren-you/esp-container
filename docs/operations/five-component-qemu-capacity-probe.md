@@ -129,3 +129,32 @@ GDB 在两次实例化的 `wasm_allocate_linear_memory` 都读到单次连续申
 本仓主机工具仍接收最多 512 KiB Wasm。将本轮有效 64 KiB counter 模块以合法自定义 section 填充到 524,288 字节，再使用当前 `product_package.py` 和仓外测试键执行 `manifest → sign → pack → verify`，所得 manifest 为 550 字节、签名为 384 字节、`product.pkg` 为 **532,480 字节**（SHA-256 `b0d84c8c245f91c962a66c651b37cc74e19f1e4bbd3de8bfc51ead24849abc78`）。它比无 app 余量的几何上限包槽多 **12,288** 字节，比保留增长空间的包槽多 **139,264** 字节。若保留 512 KiB 可接受 Wasm、两个当前签名 app 和所有既有保留区，单按字节总量就超出 4 MiB **32,768** 字节；在本次已验证的三等槽布局中，每槽又比该实包少 12,288 字节，三个槽合计缺口为 36,864 字节，布局末尾另有 4,096 字节未分配。两种口径都尚未计入未来固件增长；此算术不是可实施迁移方案。没有据此调低包大小上限、删除回退、削减 TLS/FRP 协议能力或修改产品分区。
 
 P6-03 仍未验收。签名、静态链接、无网络 QEMU 与临时分区 CSV 均不能替代真实同板 Wi-Fi/TLS、FRPS/Broker/OTA/guest 并发、三包槽完整写入恢复和保留数据迁移验证；本轮不冻结客体内存、包槽、固件大小或设备写入目标。
+
+## 2026-09-26：ABI 2 与新 WAMR 锁的五仓 QEMU 复测
+
+前节的 437 字节 ABI 1 guest、WAMR `a34d721` 和 `11,328/7,680` 字节读数属于旧源码，不能代表当前单页运行期。本轮只在 mac-work-1 的 `/private/tmp/esp-p6-current-c3-20260926/probe-base` 仓外副本组合五仓：Base `fa4d622f7824924184039a9f365be5548241e3aa`、FRP `2ffbe9e970e6cf6e7e3b32175b96a7de6d8b5587`、MQTT `18e2395123a02eab94ae5f7c7a2452c29ae28e8b`、OTA `ca13935015bf42d9a356728c3b6d2abc7aee74ae`、Container `0024695510e2b445bfdb089247d31f8cbd84e010`。固定 SDK/lwIP 为 `578cf89c343e388db43ba1f4ddcd602fedcb763c` / `2758df4cd3666b3b2a5b53830148379326425c0d`；生成 `dependencies.lock` 仍精确指向 WAMR `26c235e53e29acd8b43abe7f3b524577bd4d1ae5`。五仓组件在仓外复制为本地 IDF 组件以强制使用上述源码，Base 正式依赖锁仍指向旧 FRP/MQTT/OTA/Container，故这份镜像不是 Base 已发布的同锁构建；仓外 `source-lock.txt` 固定五仓提交和 guest 摘要，SHA-256 为 `cfdca20bc2438c309177e8f0214fadd0d8d5f15d003ceb2247bfe8abe513bce3`。仓外 `probe-inputs.sha256` 逐项固定探针修改、生成配置和测试签名键等 16 个输入，其自身 SHA-256 为 `05552ac8bdf268fa2a76050a22c3664b981370c5c19654f1fecd3cd33cad9073`。
+
+仓外探针沿用先前的强制链接门、前后两次 pthread 生命周期与 ADC2 QEMU 空桩，并适配当前 ABI 2：移除已不存在的 `heap_size_bytes` 限额字段，WAMR 实例的宿主管理 heap 为 0；guest 是当前 `counter_guest.py check` 通过的 469 字节固定 64 KiB 模块，SHA-256 `b9422cb4cb72983141988c4a9a59b602026d94729e2362403a04d1723f98a739`。仓外主控制台改为 UART0，USB 保留次控制台，显式关闭 WAMR shrunk memory；本地组件的 cJSON CMake 依赖也在仓外写明。官方 Espressif C3 QEMU 为 9.2.2 `esp_develop_9.2.2_20260417`，二进制 SHA-256 `3e38982c1ea3e750edfc8c910a0fd44727fe07d9c666b84d18d2b7985ac58246`。可在保留的仓外工程复核：
+
+```bash
+export IDF_PATH=/Users/darrenyou/.cache/darren-space/esp-idf-578cf89
+source "$IDF_PATH/export.sh"
+python3 /private/tmp/esp-p6-current-c3-20260926/container/tools/counter_guest.py check --wasm /private/tmp/abi2-counter.wasm
+idf.py -C /private/tmp/esp-p6-current-c3-20260926/probe-base/firmware -D ESP_BASE_CONTAINER_BINDING_PROBE=ON build
+python -m espsecure verify-signature --version 2 --keyfile /private/tmp/esp-p6-current-c3-20260926/probe-base/test-key.pem /private/tmp/esp-p6-current-c3-20260926/probe-base/firmware/build/esp_base.bin
+idf.py -C /private/tmp/esp-p6-current-c3-20260926/probe-base/firmware qemu --qemu-extra-args=-no-reboot
+```
+
+签名 app 为 `0x121000`（1,183,744）字节，SHA-256 `bc80d9a600dd37cc596ed2a6639d0d41ae675de292d1203e0be6f4955b0bc9b6`；仓外测试键的 RSA 第 0 签名块验签成功。ELF 保留 `efrp_tls_step`、`esp_mqtt_client_start`、`eota_preflight`、`econtainer_runtime_open` 与 `wasm_interp_call_wasm`；这只证明深链接。QEMU 运行 22 秒后由宿主 SIGTERM 结束，串口日志位于仓外 `probe-base/qemu.log`，SHA-256 `d4e74115f4c7331bee5cac96b6bec79bdbede1fbc5a1c99caff3aab46b6a0655`。
+
+| 阶段 | 8-bit free 字节 | 最大连续块字节 | 启动以来低水位字节 |
+| --- | ---: | ---: | ---: |
+| Base 初始化前，首次 `open` 前 | 201,484 | 114,688 | 201,484 |
+| 首次 guest 存活、事件调用后 | 123,812 | 59,392 | 123,812 |
+| `ESP_BASE_READY` 后 | 152,520 | 114,688 | 82,884 |
+| 第二次 `open` 前，pthread 已创建 | 144,156 | 114,688 | 74,520 |
+| 第二次 guest 存活、事件调用后 | **66,588** | **45,056** | **66,588** |
+| 第二次 `close` 后、pthread 尚未回收 | 144,156 | 114,688 | 66,588 |
+| pthread 回收后 | 152,520 | 114,688 | 66,588 |
+
+两次均为 `open=0 init=0 event=0 stop=0 guest=3`，关闭后 free 与最大块回到对应进入前。本轮 FRP `src/session.c:115` 仍对 AEAD 接收区执行单次 `calloc(1, EFRP_AEAD_RX_BYTES)`，其中 `EFRP_AEAD_RX_BYTES=65,552` 字节；未使用任何仓外分块 AEAD 优化。第二次 guest 存活时最大连续块只有 45,056 字节，比这一次 FRP 必需申请少 **20,496** 字节，尽管 free 总量仍有 66,588 字节。此时未创建 FRP 会话；Base reported 为 `provisioned=false`、`wifi_state=unconfigured`、`time_ready=false`、`mqtt_state=unconfigured`、`frp_state=unconfigured`、`frp_sessions=0`。所以本轮只能裁定该 QEMU 时点不能完成这笔连续内存申请，不能声称网络并发或实板内存已通过。ADC2 校准被仓外空桩跳过，镜像不可刷实板；签名镜像也没有三包槽安装与真实网络负载，P6-03 仍未验收。

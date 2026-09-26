@@ -14,7 +14,7 @@
     WASM_ENABLE_AOT != 0 || WASM_ENABLE_INSTRUCTION_METERING != 1 || \
     WASM_ENABLE_LIBC_WASI != 0 || WASM_ENABLE_LIB_PTHREAD != 0 || \
     WASM_ENABLE_BULK_MEMORY != 0
-#error "The C3 probe requires the bounded WAMR Classic profile"
+#error "The runtime probe requires the bounded WAMR Classic profile"
 #endif
 
 static const char *const TAG = "container-probe";
