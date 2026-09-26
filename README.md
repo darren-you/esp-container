@@ -71,6 +71,8 @@ host 工具的包格式和使用步骤见 [包工具](tools/README.md)。[只读
 
 [C3 OpenETH 与官方 FRPS 会话容量探针](docs/operations/c3-frps-qemu-session-capacity-probe.md)记录 guest 存活时真实 `efrp_start` 在 TLS OPEN 后因 Yamux 对象分配失败而停止的阶段读数；登录、注册、Pong 与会话内满长记录尚未执行。
 
+[C3 注册会话中的 32BIT 堆能力实验](docs/operations/c3-registered-32bit-qemu-capacity.md)在 Yamux 与工作流缓冲按需分配后的独立 QEMU 输入中到达注册和首个 Pong，逐笔观测 `MALLOC_CAP_32BIT` 与 8BIT 的共享容量；第 4 笔 4 KiB 申请失败，没有独立 64 KiB 池。该报告保留上述旧 FRP 阶段事实，不把新实验扩展为会话内满长记录或实体板验收。
+
 [ESP32 OpenETH 与官方 FRPS 会话容量探针](docs/operations/esp32-frps-session-qemu-capacity-probe.md)记录相同类型的五仓仿真在严格 TLS 完成后，创建 18,872 字节 FRP session 时连续内存不足；两次同签名镜像重跑均未到达登录、注册或 Pong。直接 AEAD reader 的成功不代表会话内记录已通过。
 
 [ESP32 Wi-Fi IRAM 两项开关对照](docs/operations/esp32-wifi-iram-qemu-ab.md)记录相同输入下 IRAM 减少、动态堆却不变的结果；两板不能共用这两项开关的容量结论。
