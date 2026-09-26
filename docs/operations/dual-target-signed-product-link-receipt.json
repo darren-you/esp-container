@@ -1,0 +1,187 @@
+{
+  "builds": [
+    {
+      "base_main_cmake_sha256": "67bdae7754662bf72bd2d606f49165a16d96dfb6831c2afb7b889bc829c97777",
+      "base_main_source_sha256": "5a21eb1be85f5def3798076c9790002b404b0f6be2f78dd75409cc5ec1218e6b",
+      "dependencies_lock_sha256": "6aecf19266e6159f5cc4399f9f5507b606064d2f99500c39ba373f31a0b409f7",
+      "elf_sha256": "f20302315d502a8698e326eb262bbb2d9c4f177c64caae12e6275d9700d3ef8c",
+      "libraries": {
+        "binding": {
+          "compiled_archive_bytes": 32536,
+          "map_member_count": 0,
+          "map_members": []
+        },
+        "container": {
+          "compiled_archive_bytes": 902952,
+          "map_member_count": 0,
+          "map_members": []
+        },
+        "frp": {
+          "compiled_archive_bytes": 1220912,
+          "map_member_count": 13,
+          "map_members": [
+            "aead.c.obj",
+            "client.c.obj",
+            "client_port_idf.c.obj",
+            "connect.c.obj",
+            "crypto_psa.c.obj",
+            "dns_lwip.c.obj",
+            "frame_reader.c.obj",
+            "handshake.c.obj",
+            "json_internal.c.obj",
+            "session.c.obj",
+            "tls_mbedtls.c.obj",
+            "work.c.obj",
+            "yamux.c.obj"
+          ]
+        },
+        "mqtt": {
+          "compiled_archive_bytes": 793906,
+          "map_member_count": 5,
+          "map_members": [
+            "emqtt.c.obj",
+            "emqtt_contract.c.obj",
+            "mqtt_client.c.obj",
+            "mqtt_msg.c.obj",
+            "platform_esp32_idf.c.obj"
+          ]
+        },
+        "ota": {
+          "compiled_archive_bytes": 357620,
+          "map_member_count": 4,
+          "map_members": [
+            "http_deadline.c.obj",
+            "http_transport.c.obj",
+            "ota.c.obj",
+            "update.c.obj"
+          ]
+        },
+        "wamr": {
+          "compiled_archive_bytes": 4715098,
+          "map_member_count": 0,
+          "map_members": []
+        }
+      },
+      "map_sha256": "41649e4bfa7f1667c9685921e66654ca3f88b00849436115c9747672d2e1a50d",
+      "official_bootloader_line": "Bootloader binary size 0x53e0 bytes. 0x2c20 bytes (34%) free.",
+      "official_signature_valid": true,
+      "official_size_line": "esp_base.bin binary size 0x101000 bytes. Smallest app partition is 0x1e0000 bytes. 0xdf000 bytes (46%) free.",
+      "partition_binary_sha256": "b8e764a886e32c84d952060ade2930bc3c4eaa2307d36ed6ee5f7e0d4f364bd5",
+      "retained_symbols": {
+        "econtainer_runtime_open": false,
+        "econtainer_slots_reconcile": false,
+        "efrp_tls_step": true,
+        "emqtt_create": true,
+        "eota_preflight": true,
+        "esp_base_container_reconcile": false,
+        "esp_mqtt_client_start": true,
+        "wasm_interp_call_wasm": false
+      },
+      "sdkconfig_sha256": "df1603aef6ffe1b928934bad768407b2bac79f2f292f2d1774395e7270641dae",
+      "signed_image_bytes": 1052672,
+      "signed_image_sha256": "4901cae7c7f2b1d91926e0e142a0a6e2e42e0d31b0bd18ee667e16fa07f78b7a",
+      "target": "esp32c3"
+    },
+    {
+      "base_main_cmake_sha256": "67bdae7754662bf72bd2d606f49165a16d96dfb6831c2afb7b889bc829c97777",
+      "base_main_source_sha256": "5a21eb1be85f5def3798076c9790002b404b0f6be2f78dd75409cc5ec1218e6b",
+      "dependencies_lock_sha256": "c618b0d080012a625d85374e91bf58303e93f18b3670c4c7492cc6972574364d",
+      "elf_sha256": "03f8c799268a742d98bb943efad9c2cd0f94114ad6070ae602b3c6bc449fb990",
+      "libraries": {
+        "binding": {
+          "compiled_archive_bytes": 22676,
+          "map_member_count": 0,
+          "map_members": []
+        },
+        "container": {
+          "compiled_archive_bytes": 527504,
+          "map_member_count": 0,
+          "map_members": []
+        },
+        "frp": {
+          "compiled_archive_bytes": 722240,
+          "map_member_count": 13,
+          "map_members": [
+            "aead.c.obj",
+            "client.c.obj",
+            "client_port_idf.c.obj",
+            "connect.c.obj",
+            "crypto_psa.c.obj",
+            "dns_lwip.c.obj",
+            "frame_reader.c.obj",
+            "handshake.c.obj",
+            "json_internal.c.obj",
+            "session.c.obj",
+            "tls_mbedtls.c.obj",
+            "work.c.obj",
+            "yamux.c.obj"
+          ]
+        },
+        "mqtt": {
+          "compiled_archive_bytes": 458646,
+          "map_member_count": 5,
+          "map_members": [
+            "emqtt.c.obj",
+            "emqtt_contract.c.obj",
+            "mqtt_client.c.obj",
+            "mqtt_msg.c.obj",
+            "platform_esp32_idf.c.obj"
+          ]
+        },
+        "ota": {
+          "compiled_archive_bytes": 224820,
+          "map_member_count": 4,
+          "map_members": [
+            "http_deadline.c.obj",
+            "http_transport.c.obj",
+            "ota.c.obj",
+            "update.c.obj"
+          ]
+        },
+        "wamr": {
+          "compiled_archive_bytes": 2810648,
+          "map_member_count": 0,
+          "map_members": []
+        }
+      },
+      "map_sha256": "9a4e3e4bde56913c373dfc1e70ae42bb844643983458b3b1e10d2c0d3faf8f92",
+      "official_bootloader_line": "Bootloader binary size 0x5b10 bytes. 0x14f0 bytes (19%) free.",
+      "official_signature_valid": true,
+      "official_size_line": "esp_base.bin binary size 0xefff4 bytes. Smallest app partition is 0x120000 bytes. 0x3000c bytes (17%) free.",
+      "partition_binary_sha256": "728b2dbb22d4914c4fa3f0aa604b83e527cf2bd9a23bca19be3bea94f2bc6ed0",
+      "retained_symbols": {
+        "econtainer_runtime_open": false,
+        "econtainer_slots_reconcile": false,
+        "efrp_tls_step": true,
+        "emqtt_create": true,
+        "eota_preflight": true,
+        "esp_base_container_reconcile": false,
+        "esp_mqtt_client_start": true,
+        "wasm_interp_call_wasm": false
+      },
+      "sdkconfig_sha256": "394bd3d272d01394ed316286725291dd5a062212b599376a65fc51d47a0f4c8c",
+      "signed_image_bytes": 983028,
+      "signed_image_sha256": "0838a19d1ddca914de2c7c04e22b86c238342e31ded257357dfd61fc782d472a",
+      "target": "esp32"
+    }
+  ],
+  "idf_commit": "578cf89c343e388db43ba1f4ddcd602fedcb763c",
+  "lwip_commit": "2758df4cd3666b3b2a5b53830148379326425c0d",
+  "source_manifest": {
+    "archives": {
+      "base": "df48994ede47204fff870e07f47285feea5543d178a185745882b1b32140226e",
+      "container": "e01c855b33201724643818a5f1210a4632d171e7b59a75ef5e09e7021bf3ddd0",
+      "frp": "479ddc19f3111d065ad4eb612c50fe8bb3539372f2d91516e26263921980d3d4",
+      "mqtt": "f0d397ba4ce2ee65627ed6fe98d91f0ce10278446c3303fff06472ea7515a655",
+      "ota": "9fba0739ff7cfd198ca4035dd254d868493fe096a007f65e8832b6468007b765"
+    },
+    "commits": {
+      "base": "7ec2738d678735a7f8e2965325ceac2d3f98c9f8",
+      "container": "8eb805f3f12cb3cd836e9833acb4aca878ae80e7",
+      "frp": "1f0c8f37db3765a74b3b95871bb266d0c73d1248",
+      "mqtt": "9d6d95e779f4f5ff387a6d9b54015bf4e43565f2",
+      "ota": "207273188b984161362824c3344614e812016836"
+    }
+  },
+  "wamr_component_hash": "a799be27248cadffdee6f6fae988dbdf3f5d423baab0b1008d74b8581b5ed507"
+}
