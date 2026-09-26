@@ -1,5 +1,36 @@
 # 五组件链接的 C3 QEMU guest 容量切片：2026-09-23
 
+## 2026-09-27：仅替换 FRP 惰性分块后的同输入复测
+
+正式 Base 在 `1f43b6ff867dfcc262fc6a348b6d50285395c6e0` 更新了 FRP 依赖锁；**本轮没有构建这个 Base 提交**，所测 Base 仍是 `058e965` 的仓外副本。
+
+**版本边界：**本轮是仓外本地组件覆盖的单变量 A/B。Base `058e965` 原 `device_protocol/idf_component.yml` 仍标 FRP `36e1506`，生成锁只记录 `esp_frp` 的 `components/esp_frp` 本地路径和组件版本 `0.1.0`；下文相同的锁摘要不能证明 FRP 或其他本地组件源码未漂移。实际实现由 `1f0c8f` 精确 Git 归档与本地组件逐文件一致、其余工程与前轮逐文件一致、构建日志使用该本地组件、链接 map 包含其 `aead.c.obj` 及 QEMU 行为共同核对。这不是 Base 后续正式依赖锁的构建。
+
+**结论：P6-03 仍未验收。** 将前节 QEMU 镜像中的 FRP 源码从 `36e1506a2145321fc292294de59c0aa4532f73a7` 单独替换为 `1f0c8f37db3765a74b3b95871bb266d0c73d1248` 后，早期 guest 与完整 64 KiB AEAD 记录继续通过认证和逐字节核对；Base READY 后的 guest 与两次完整 4 KiB 记录继续同存、认证并回收。READY 后完整 64 KiB 记录仍在第 15 个 4 KiB 接收块申请时返回 `EFRP_NO_MEMORY=-20`，未进入 tag 认证。变化是失败前已消费的合法 wire 从旧实现的 **16 字节**增至 **57,360 字节**（12 字节 nonce、4 字节长度头、14 个完整密文块），与新实现按密文到达才申请块的源码行为一致；不能将更多已消费字节解释为完整记录可用。
+
+新 FRP 使用该精确提交的 `git archive | gzip -n`，归档 SHA-256 `7e89a5f909d7700b61a6a1aafb7289f4fcbbac3f88bd0724ee7cb90bb0c88423`，`src/aead.c` SHA-256 `7b480078377b51caa617b2892718e03bc207b1ac5c633087970fc59f0967965f`。仓外复制前节已修正 ADC2 链接顺序的 QEMU 工程，删除复制工程中的原 FRP，再以归档内容替换；新归档与嵌入组件 `diff -qr` 一致，排除 `build` 和 `esp_frp` 后新旧工程 `diff -qr` 无差异。Base `058e965671fa0e4d417114897541710699571c52`、MQTT `9d6d95e779f4f5ff387a6d9b54015bf4e43565f2`、OTA `207273188b984161362824c3344614e812016836`、Container `8eb805f3f12cb3cd836e9833acb4aca878ae80e7`、ESP-IDF `578cf89c343e388db43ba1f4ddcd602fedcb763c`、实际 lwIP `2758df4cd3666b3b2a5b53830148379326425c0d`、WAMR `26c235e53e29acd8b43abe7f3b524577bd4d1ae5` 均沿用前节。469 字节一页 guest、4 KiB／64 KiB wire（SHA-256 分别为 `2855df4bd4199f7ce21526c33bcc0b21776adf4d6e5b9f631e43491ea9d30e20`／`35979812621d6b6778c4086f937991353cfa7f73a4c1aa60dfcfc5507b2542aa`）、公开测试键、1024 字节 feed 切片、探针 C 源码 SHA-256 `b1526168e0f0db1a21869a485bd7dc165cdfcbe37e0637ea9d9e0534bf80ea1f` 与 ADC2 仿真空桩 SHA-256 `4ac43d342012326befab8e69245de93caf102e939cafa8028d07cfc238757b1e` 均未改变。
+
+固定 SDK `idf.py build` 通过，生成 `sdkconfig`／`dependencies.lock` SHA-256 仍为 `cb4911792bf9fc1191e4dfc90ff04e483e880ed6800a455f590e594c5ce6b62d`／`63259c2444b89238187a778563a6b52f873a5448e32eb1ac5b8d10b4b3763948`。新 app 为 **1,183,744 字节（`0x121000`）**，SHA-256 `93fb2b027f5bf8d0acae828e4812cd5665acc2803f21621ea2b7ee169051efdc`，固定 SDK `espsecure.py verify-signature --version 2` 使用与前节逐字节相同的仓外 RSA 测试键验证 block 0 有效。构建日志 SHA-256 `273da31d12e0c20ea821752377430ff1817a6da0ce836cf361500f90410d277b`；官方 C3 QEMU 9.2.2 与前节同一可执行文件。45 秒采样后由宿主发送 SIGTERM，日志 SHA-256 `4a7e8deb80dc27e277eab15e9f96fba5b45758a3b648d04bd6ef0fc14cf278b3`，无 panic。仓外完整复核目录是 mac-work-1 的 `/private/tmp/esp32c3-frp-lazy-exact-20260927`；首次配置遗漏 `-DESP_BASE_CONTAINER_BINDING_PROBE=ON`，CMake 在解析 `container_binding` 时停止，未生成镜像。补齐与前节相同的构建开关后形成上述唯一运行镜像，成功日志为该目录的 `build-2.log`，QEMU 原始日志为 `qemu.log`。
+
+| 同一镜像、同一 boot 阶段 | 前节旧 FRP | 本轮新 FRP |
+| --- | --- | --- |
+| 早期 guest 存活，完整 64 KiB wire | 认证通过；核对 65,536 字节；16 分配／16 释放 | **同样通过**；`consumed=65568`、`records=1`、核对 65,536 字节；16 分配／16 释放 |
+| READY 后 guest `on_event` 完成 | free／largest `65,480／45,056` B | **`65,480／45,056` B** |
+| READY 后连续两条 4 KiB wire | 两次认证成功；各自清理后 `65,480／45,056` B | **两次相同**；每次 `consumed=4128`、`records=1`、核对 4,096 字节；各 1 分配／1 释放，清理后 `65,480／45,056` B |
+| READY 后 4 KiB 坏 tag | `-11`、无明文、清理后恢复 | **相同**；`records=0`、0 字节明文交付；1 分配／1 释放 |
+| READY 后完整 64 KiB wire | `-20`，仅消费 16 字节头；14 分配／14 释放；清理后恢复 | **`-20`，消费 57,360 字节**；14 分配／14 释放、一次申请失败、峰值已分配 57,344 B；清理后仍为 `65,480／45,056` B，**未完成认证** |
+| 第二次 guest 与 pthread 关闭后 | free／largest `151,412／114,688` B | **`151,412／114,688` B**，探针预期检查失败数 0；free 低水位 7,248 B |
+
+**头阶段零分配的证据边界：**本轮保持原 QEMU 探针每次最多投喂 1024 字节，首笔输入同时包含头和密文，因此 QEMU 日志不能单独读出「恰好前 16 字节」的分配次数。精确 FRP 归档中的 `tests/aead_test.c`（SHA-256 `0f07b287614203e25af725d6b4c0f82f4b91b67f0f89587d29b8241f5eb31532`）单独喂入合法 16 字节头并断言 `chunk_calls == 0`，再喂 1 字节密文断言首次 4 KiB 分配；同一测试还逐一验证第 1～16 块失败时的 consumed 前缀和回收。在该归档的 host OpenSSL 构建上只运行 `ctest -R '^aead$'`，1/1 通过，测试日志 SHA-256 `b1413b5d4cf63dd77a533f01d08a0485d1c1adccbf0a3d8c7eaaa7722034baf0`。这证明共用 reader 源码的头阶段逻辑，不能冒充独立的 QEMU 16 字节采样；QEMU 实测支持新行为对满长失败前缀与资源回收的影响。
+
+早期完整 64 KiB 认证后的 free 仍由 123,844 降为 122,636 B、最大连续块由 59,392 降为 57,344 B；与前节相同的首用差异来源仍未确定。Base READY 之后的重复 4 KiB、坏 tag 和满长失败各自清理均回到进入前读数，没有看到持续下降。此实验没有真实 FRP session、TLS/FRPS、MQTT Broker、OTA 下载、真实业务包或实体板；**不改变 FRP 的 64 KiB 协议上限或 Container 单页约束**。ADC2 空桩仍只在仓外 QEMU 工程，镜像不可刷实体板，三包槽和运行态并发容量仍须另行验证。
+
+### 补充镜像：QEMU 恰好 16 字节头的直接采样
+
+为补齐主镜像首笔 1024 字节输入的观测边界，另从本轮新 FRP 的仓外 `probe` 复制 `probe-header`，仅用[头部仪表脚本](instrument_frp_header_qemu.py)把 READY 阶段满长 wire 的首笔拆成恰好 16 字节、记录分配和堆读数，然后继续同一完整 wire。脚本 SHA-256 `b2250f7ccc2c727aaf72454d01231018ff6e3770d66b4632c8293750efc87027`；补充 C 探针 SHA-256 `09604f79ace6c3d43be2e9a8f3f71331efadd48b01456cf1e69423fa49d9b921`。两份新 FRP 工程排除 `build` 和该探针后逐文件 `diff -qr` 无差异。补充 app SHA-256 `692444c31aee840077ae306efda792b19a119a5294fb80c1328420e0fab445a3`，同一 RSA 测试键验签通过，`sdkconfig`／本地路径型锁摘要仍与主镜像相同；补充构建日志 SHA-256 `5aac371b74b262bb776db83806ab72efce752676c5c0c888c814945e410a7add`。
+
+补充 QEMU 日志 SHA-256 `bb5607179f84ce734deec22aefb00258dbe0735959885e257f6c7a0d43803b0d`，直接记录 `header_only feed=0 consumed=16 alloc=0 live=0 before=65480/45056 after=65480/45056`；继续投喂剩余密文后仍于第 15 块返回 `-20`，最终 `consumed=57360`、14 分配／14 释放、清理后 `65480/45056`，探针失败数 0。15 秒后宿主主动停止 QEMU，未见 panic。**此镜像只用于确认目标 QEMU 的头阶段零分配；由于测试探针改变了 feed 边界，上表的新旧 FRP 容量比较仍只使用未修改探针的主镜像。**
+
 ## 2026-09-27：当前精确锁的完整 AEAD 认证与一页 guest 同存
 
 **结论：P6-03 继续未验收。** 当前精确五仓的无网络 C3 QEMU 中，Base READY 后一页 64 KiB ABI 2 guest 存活，8-bit heap free／最大连续块为 **65,480／45,056 字节**。真实 FRP 分块 reader 对两条完整 4 KiB AES-GCM 测试记录分别认证成功、逐字节核对 4,096 字节并释放，读数两次都回到 65,480／45,056；篡改 tag 得到 `EFRP_AUTHENTICATION_FAILED=-11`，也完整释放。随后投喂完整 64 KiB 合法测试 wire 时，在 reader 读完 12 字节 nonce 和 4 字节合法长度头后，第 15 个 4 KiB 块申请失败，返回 `EFRP_NO_MEMORY=-20`，已有 14 块全部释放，读数仍回到 65,480／45,056。**这条 READY 后的满长记录未进入密文/tag 认证，不能写成 64 KiB 收发成功。** 同一镜像在 Base 初始化前、guest 已存活时，对完整 64 KiB wire 的认证和 65,536 字节逐字节核对成功；两个时点不可互换。
