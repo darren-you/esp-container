@@ -158,3 +158,45 @@ idf.py -C /private/tmp/esp-p6-current-c3-20260926/probe-base/firmware qemu --qem
 | pthread 回收后 | 152,520 | 114,688 | 66,588 |
 
 两次均为 `open=0 init=0 event=0 stop=0 guest=3`，关闭后 free 与最大块回到对应进入前。本轮 FRP `src/session.c:115` 仍对 AEAD 接收区执行单次 `calloc(1, EFRP_AEAD_RX_BYTES)`，其中 `EFRP_AEAD_RX_BYTES=65,552` 字节；未使用任何仓外分块 AEAD 优化。第二次 guest 存活时最大连续块只有 45,056 字节，比这一次 FRP 必需申请少 **20,496** 字节，尽管 free 总量仍有 66,588 字节。此时未创建 FRP 会话；Base reported 为 `provisioned=false`、`wifi_state=unconfigured`、`time_ready=false`、`mqtt_state=unconfigured`、`frp_state=unconfigured`、`frp_sessions=0`。所以本轮只能裁定该 QEMU 时点不能完成这笔连续内存申请，不能声称网络并发或实板内存已通过。ADC2 校准被仓外空桩跳过，镜像不可刷实板；签名镜像也没有三包槽安装与真实网络负载，P6-03 仍未验收。
+
+## 2026-09-26：FRP 分块 AEAD 的 ABI 2 同镜像分配复测
+
+本节接续上一节的 ABI 2 工程，只在 mac-work-1 的仓外副本 `/private/tmp/esp-p6-frp-chunked-20260926` 把 FRP 从 `2ffbe9e970e6cf6e7e3b32175b96a7de6d8b5587` 换成已提交的 `533e29467b24d01157ff3b5229e62c93d101be61`。Base、MQTT、OTA、Container 分别仍为 `fa4d622f7824924184039a9f365be5548241e3aa`、`18e2395123a02eab94ae5f7c7a2452c29ae28e8b`、`ca13935015bf42d9a356728c3b6d2abc7aee74ae`、`0024695510e2b445bfdb089247d31f8cbd84e010`；固定 IDF/lwIP/WAMR 分别为 `578cf89c343e388db43ba1f4ddcd602fedcb763c`、`2758df4cd3666b3b2a5b53830148379326425c0d`、`26c235e53e29acd8b43abe7f3b524577bd4d1ae5`。锁定 469 字节 ABI 2 counter guest 的 SHA-256 仍为 `b9422cb4cb72983141988c4a9a59b602026d94729e2362403a04d1723f98a739`。仓外 [源码锁](frp-chunked-source-lock.txt) SHA-256 为 `bfa700b61464383615f64c4510d77f88de78848720e74f0ce2956e5c5a4cc863`，[17 项输入摘要](frp-chunked-probe-inputs.sha256)文件自身 SHA-256 为 `028e28f25975b3355b4b1dca23f6aa2bf31f2549e17957a7db7014f161a65d63`。
+
+该 QEMU 专用 [分配探针源码](frp_chunked_capacity_probe.c) SHA-256 为 `7b1ff273eb50a68b34b2e1e9206ffc6276b0ae91a553afda54eb941fc91935b1`。它在 `open → init → on_event` 后、guest 尚未 `stop/close` 时，调用**真实** `efrp_aead_reader_init_chunked`，随后只投喂 12 字节测试 nonce 与合法 4 字节记录长度头，分别声明明文 4、32、48、56、60、64 KiB；每轮调用 `efrp_aead_reader_destroy` 并记录 free/最大连续块。FRP 在解析长度头时立即分配实际大小的 4 KiB 块，所以该检查能直接验证分块申请在同一 WAMR 存活时点的结果。它**没有**创建 FRP session/TLS/FRPS 连接，没有投喂密文和 tag，也没有交付已认证明文；`feed=0` 只表示记录头和对应块申请成功，不能视为整条记录通过。
+
+固定 SDK 构建与 RSA 测试键签名验证通过；最终签名 app 为 **1,183,744 字节**（`0x121000`），SHA-256 `f6026b3ac6d5b8e14e8794265b831e70e447286da70daf743f8d991f0b647b24`。ELF map 保留 `efrp_aead_reader_init_chunked`、`efrp_tls_step`、`esp_mqtt_client_start`、`eota_preflight`、`econtainer_runtime_open`、`wasm_interp_call_wasm`。官方 Espressif C3 QEMU 9.2.2 的二进制 SHA-256 仍为 `3e38982c1ea3e750edfc8c910a0fd44727fe07d9c666b84d18d2b7985ac58246`；25 秒运行日志 SHA-256 为 `f47404da2f2b23c8b0d9543b7d331d3426638b40ee166f167a1fb1217970b373`，由宿主主动 SIGTERM 结束，无 panic。替换 FRP 后、尚未加分配调用的基线镜像 SHA-256 为 `31bfbfa23c7293bebf26c205c2af6c1c0b990cae41a678556cb3c81a45db643b`，日志 SHA-256 `7d9bb7d19ec91ea3dab32cb60d4362a3ba64b051ca87dad40c1759e00a7e16bf`；其 Base READY 后 guest 存活的 free/最大连续块仍为 **66,588/45,056** 字节。
+
+| guest 存活时点 | 声明明文长度 | `feed` | 成功申请块数／字节 | 分配后 free／最大连续块 | 销毁后 free／最大连续块 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Base 初始化前 | 64 KiB | `0` | 16／65,536 | 58,212／45,056 | 123,812／59,392 |
+| Base READY 后 | 4 KiB | `0` | 1／4,096 | 62,488／45,056 | 66,588／45,056 |
+| Base READY 后 | 32 KiB | `0` | 8／32,768 | 33,788／20,480 | 66,588／45,056 |
+| Base READY 后 | 48 KiB | `0` | 12／49,152 | 17,388／7,680 | 66,588／45,056 |
+| Base READY 后 | 56 KiB | `0` | 14／57,344 | 9,188／3,584 | 66,588／45,056 |
+| Base READY 后 | 60 KiB | `-20` | 14／57,344 | 回滚后 66,588／45,056 | 66,588／45,056 |
+| Base READY 后 | 64 KiB | `-20` | 14／57,344 | 回滚后 66,588／45,056 | 66,588／45,056 |
+
+`-20` 是 `EFRP_NO_MEMORY`：60 与 64 KiB 均在第 15 笔 4 KiB 申请处失败；FRP reader 清理此前的 14 块，堆读数恢复。失败期间的启动以来低水位为 **9,012** 字节，失败后打印的 free 是回滚后值。该扫描只界定被测长度集合：56 KiB 分配成功，60 和 64 KiB 分配失败，不推断精确最大可接受长度。尤其是真实会话还需 17,848 字节 session、5,552 字节 Yamux、握手临时区、TLS/网络和密码库资源；本实验均未同时申请。因此新版分块消除了旧版单笔 65,552 字节连续申请，**仍不能让本 QEMU 切片在 Base READY + 64 KiB guest 存活时接收满长控制记录**。P6-03 保持未验收。
+
+可在保留的仓外工程复核最终制品与日志。下列准备命令在 darren-space 工作区执行，从上一节仓外五仓副本复制实验输入，再用精确 FRP 提交替换组件；[探针源码](frp_chunked_capacity_probe.c)及[QEMU 运行脚本](frp_chunked_qemu.py)均保存在本仓：
+
+```bash
+ssh mac-work-1 'mkdir -p /private/tmp/esp-p6-frp-chunked-20260926 && rsync -a --exclude=build /private/tmp/esp-p6-current-c3-20260926/probe-base/ /private/tmp/esp-p6-frp-chunked-20260926/'
+git -C tooling/esp-frp archive 533e29467b24d01157ff3b5229e62c93d101be61 | ssh mac-work-1 'mkdir -p /private/tmp/esp-p6-frp-chunked-20260926/frp-source && tar -xf - -C /private/tmp/esp-p6-frp-chunked-20260926/frp-source && rsync -a --delete /private/tmp/esp-p6-frp-chunked-20260926/frp-source/ /private/tmp/esp-p6-frp-chunked-20260926/firmware/components/esp_frp/'
+scp tooling/esp-container/docs/operations/frp_chunked_capacity_probe.c mac-work-1:/private/tmp/esp-p6-frp-chunked-20260926/firmware/apps/esp_base/main/capacity_runtime_probe.c
+scp tooling/esp-container/docs/operations/frp_chunked_qemu.py mac-work-1:/private/tmp/esp-p6-frp-chunked-20260926/run_qemu.py
+```
+
+以下命令在 mac-work-1 终端执行。原工程的 `qemu_adc2_stub.c`、UART0 主控制台和仓外 RSA 测试键继续保留：
+
+```bash
+export IDF_PATH=/Users/darrenyou/.cache/darren-space/esp-idf-578cf89
+source "$IDF_PATH/export.sh"
+python3 /private/tmp/esp-p6-current-c3-20260926/container/tools/counter_guest.py check --wasm /private/tmp/abi2-counter.wasm
+idf.py -C /private/tmp/esp-p6-frp-chunked-20260926/firmware -D ESP_BASE_CONTAINER_BINDING_PROBE=ON build
+python -m espsecure verify-signature --version 2 --keyfile /private/tmp/esp-p6-frp-chunked-20260926/test-key.pem /private/tmp/esp-p6-frp-chunked-20260926/firmware/build/esp_base.bin
+python3 /private/tmp/esp-p6-frp-chunked-20260926/run_qemu.py /private/tmp/esp-p6-frp-chunked-20260926/firmware /private/tmp/esp-p6-frp-chunked-20260926/qemu-scan.log 25
+```
+
+上述 `0x121000` 镜像带仓外容量探针、固定 guest 字节、ADC2 QEMU 空桩、UART0 控制台和测试签名键，FRP/MQTT/OTA 的业务能力仍主要通过 map 深链接，未运行真实网络负载。此轮没有逐符号 map 差分去除探针与空桩，因此**不能把 `0x121000` 当作生产五组件固件大小**，也不能据此更新上一节的 Flash 产品布局结论。QEMU 空桩镜像不可刷实板；本轮没有设备写入、真实 Wi-Fi/FRPS/Broker/OTA 会话、完整密文记录解密或包槽迁移。
