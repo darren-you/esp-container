@@ -29,7 +29,7 @@
 - `PACKAGE_REUSE`：只可引用旧运行固件的已确认包；`econtainer_package_slot_validate_binding` 按新固件的独立产品/grant 输入重新验签、检查 Wasm 与配额，单次提交备用固件无包绑定及 `PREPARED`；直到最终确认才共享该包槽，不复制 Flash。
 - `NO_PACKAGE`：明确记录新固件没有 guest，直接提交 `PREPARED`；试运行选择得到 `EMPTY`，健康与确认仍须由 Base 明确推进，不能把无包等同于固件健康。
 
-Base 只可在 `PREPARED` 持久读回后调用 OTA 选择；新镜像实际启动并经 Base 签名/otadata 核对后，按 `begin_trial → 业务健康验证 → mark_healthy → esp-ota 标记 VALID 并回读 → confirm` 顺序推进。`confirm` 不提供 OTA 状态证明，必须由调用方持有同一串行 owner 保证顺序。失败回到旧镜像时，Base 先显式 `abandon`，待实际 OTA 状态证明新目标不再可启动，才可用 `drop_aborted_firmware` 删除其绑定；这两个 API 都不擦包槽。读回不确定时不得选新镜像或擦槽，须重新读取唯一 blob 裁决。主机测试覆盖写包、复用真实签名包、无包、旧备用包损坏、错误授权、commit 不确定、旧 trial 重启阻断与失败回退；真实 OTA 调用和掉电验证仍未接入。
+Base 只可在 `PREPARED` 持久读回后调用 OTA 选择；新镜像实际启动并经 Base 签名/otadata 核对后，按 `begin_trial → 业务健康验证 → mark_healthy → esp-ota 标记 VALID 并回读 → confirm` 顺序推进。`confirm` 不提供 OTA 状态证明，必须由调用方持有同一串行 owner 保证顺序。若在 `HEALTH_VERIFIED` 后复位，`reconcile` 对运行中的目标固件仍返回 `CONFLICT/BOOT_BLOCKED`，不能重启 trial；只有 Base 独立读回目标签名固件为 OTA `VALID`、持久记录与真实固件/包相符并完成本次本地启动基本检查，才可使用记录中原 trial boot ID 补交 `confirm`，不能重放外部业务动作。若状态仍为 pending、记录不匹配或完整性检查失败，保持阻断。失败回到旧镜像时，Base 先显式 `abandon`，待实际 OTA 状态证明新目标不再可启动，才可用 `drop_aborted_firmware` 删除其绑定；这两个 API 都不擦包槽。读回不确定时不得选新镜像或擦槽，须重新读取唯一 blob 裁决。主机测试覆盖写包、复用真实签名包、无包、旧备用包损坏、错误授权、commit 不确定、旧 trial 重启阻断与失败回退；真实 OTA 调用和掉电验证仍未接入。
 
 2026-09-27 的独立工作树复核：锁定 WAMR 与 wasi-sdk 33 下主机 CTest **9/9**、Python unittest **运行 14 项，其中 1 项因工具链条件跳过，其余通过**；`slots`、`package_slot`、`slots_idf` 分别以严格 ASan/UBSan 运行通过。固定 IDF `578cf89` 的 C3 与 ESP32 独立样例编译通过，app 大小分别为 `0x37920`、`0x35000`，SHA-256 分别为 `0835366e7ecd1424c5b14772a0cf7e1f0edbe0206d0e3fac65e119aa5bd28c4f`、`ebee2fd8104ae9702f8ba2b3b8c46426df27a98dbeb4ce2dab0411e01b30e09c`。样例未装配 Base/FRP/MQTT/OTA，也未调用联合切换入口，故尺寸不代表产品组合余量。
 

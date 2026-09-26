@@ -756,6 +756,15 @@ static void test_firmware_no_package_and_rollback(void)
     assert(econtainer_slots_load(&io, &geometry, &state) == ECONTAINER_SLOTS_OK);
     assert(econtainer_slots_mark_healthy(&io, &geometry, state.sequence,
         boot_id, &state) == ECONTAINER_SLOTS_OK);
+    /* A reboot at this point is blocked by normal reconciliation. Only Base
+     * can independently prove OTA VALID, then reload this durable health
+     * record and complete the original operation with its stored boot ID. */
+    assert(econtainer_slots_reconcile(&io, &geometry, &running_new,
+        &state, &decision) == ECONTAINER_SLOTS_CONFLICT);
+    assert(decision == ECONTAINER_SLOT_BOOT_BLOCKED);
+    assert(econtainer_slots_load(&io, &geometry, &state) == ECONTAINER_SLOTS_OK);
+    assert(state.phase == ECONTAINER_SLOT_HEALTH_VERIFIED &&
+        memcmp(state.operation.trial_boot_id, boot_id, sizeof(boot_id)) == 0);
     assert(econtainer_slots_confirm(&io, &geometry, state.sequence,
         target, boot_id, &state) == ECONTAINER_SLOTS_OK);
     assert(state.phase == ECONTAINER_SLOT_CONFIRMED &&

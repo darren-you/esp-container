@@ -252,7 +252,13 @@ econtainer_slots_result_t econtainer_slots_mark_healthy(
     const uint8_t boot_id[ECONTAINER_SLOT_BOOT_ID_BYTES],
     econtainer_slots_state_t *state);
 
-/* Product-only commit; health proof and actual firmware must match this operation. */
+/* Commit a product-only or firmware/package trial. Health proof, persisted
+ * trial boot ID and actual running firmware must match this operation. For a
+ * firmware transition, Base must first prove the signed target is OTA VALID
+ * and read back that state under the same storage owner. This API cannot
+ * inspect otadata. After a reboot in HEALTH_VERIFIED, Base may use the stored
+ * original trial boot ID only after that VALID proof and local boot checks;
+ * reconcile alone never authorizes a new trial or confirmation. */
 econtainer_slots_result_t econtainer_slots_confirm(
     const econtainer_slots_io_t *io, const econtainer_slots_geometry_t *geometry,
     uint32_t expected_sequence, const uint8_t running_firmware_sha256[32],
