@@ -63,6 +63,8 @@ host 工具的包格式和使用步骤见 [包工具](tools/README.md)。[只读
 
 [C3 Wi-Fi IRAM 两项开关的 QEMU 容量对照](docs/operations/c3-wifi-iram-qemu-ab.md)记录同输入实验中完整 AEAD reader 与一页 guest 的结果及实际 FRP 会话仍未闭合的内存缺口。
 
+[ESP32 五组件认证 QEMU 容量探针](docs/operations/esp32-authenticated-qemu-capacity-probe.md)记录 Base READY 后单页 guest 与完整 AEAD 记录的同存读数；[ESP32 Wi-Fi IRAM 两项开关对照](docs/operations/esp32-wifi-iram-qemu-ab.md)记录相同输入下关闭两项后 IRAM 减少但动态堆不变的结果。两项均为离线仿真证据。
+
 ## 项目边界
 
 - 本仓拥有 WAMR 集成、guest ABI、包验证、实例生命周期、资源配额和三包槽机制；主机包工具现与设备流式扫描器对齐签名清单和 Wasm 字节可确定的 Classic/ABI 静态准入，另有 counter 样例编译检查。
