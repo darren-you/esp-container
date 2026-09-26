@@ -26,7 +26,7 @@
 
 UART0 原始日志记录 `before free/largest=294688/163840`、正常 `run call_ok=1 result=0 exception=none`、死循环 `looping call_ok=0 ... Exception: instruction limit exceeded`、`after free/largest=294580/163840`，最终 `normal=1 instruction_limit=1`，未见 panic 或 WDT。实验结束以本轮完整恢复件写回并经 esptool 校验，再独立读回 4 MiB，与本轮两份恢复件逐字节一致；原 AT 版本仍为 `1.1.b1.0`，配置只读查询均成功且结果逐字节等于写前。原始 Flash、MAC、AT 配置和串口日志仅保存在 ESP Tool 私有 `container-esp32-20260926` receipt。
 
-两个 target 的同一共享探针源码均已在真实板上验证最小正常调用与精确指令额度异常。当前仍是 `codex/c3-low-memory@0024695510e2b445bfdb089247d31f8cbd84e010` 工作树上的未提交候选；P6-02 仍需把双目标实际消费的完整源码提交、工具链/特性/预算配置与上述制品冻结为同一可复核合同，不能把本轮实板结果自动赋予后续改动。两板的 Flash/堆数字只属于独立探针，不证明 P6-03 的五组件并发、真实业务包、三包槽或新分区。
+两个 target 的同一共享探针源码均已在真实板上验证最小正常调用与精确指令额度异常。本轮构建发生在 `codex/c3-low-memory@0024695510e2b445bfdb089247d31f8cbd84e010` 的未提交工作树；随后把参与构建的共享源码、双目标 CMake／默认配置和锁保存为本地提交 `fc1d3bec72c1604e406126eabe7c6a098fdb6785`，其余修改为本轮证据文档。共用 `main.c` 的 SHA-256 为 `7fd91d4e03e4989a2cf79e9f7b8968cf6d2cb4ffaad12773c969effc33ba2fbd`，两目标生成锁均固定 WAMR `26c235e53e29acd8b43abe7f3b524577bd4d1ae5`；mac-work-1 所用 RISC-V 和 Xtensa 编译器目录版本均为 `esp-15.2.0_20251204`，IDF/lwIP 精确源码见页首。独立 guest SDK 输入仍为 wasi-sdk 33、官方 macOS arm64 资产 SHA-256 `85c997a2665ead91673b5bb88b7d0df3fc8900df3bfa244f720d478187bbdc78`；本段最小探针直接内嵌两段固定 Wasm 字节，没有调用 guest 编译器。该提交未推送，不把真板结果自动赋予后续源码改动。两板的 Flash／堆数字只属于独立探针，不证明 P6-03 的五组件并发、真实业务包、三包槽或新分区。
 
 ## 历史检查点
 
