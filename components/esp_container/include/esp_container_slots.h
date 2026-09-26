@@ -200,6 +200,21 @@ econtainer_slots_result_t econtainer_slots_stage_firmware(
     econtainer_slot_validate_binding_fn validate_fn, void *validate_context,
     econtainer_slots_state_t *state);
 
+/* Base has a durable OTA write receipt and, under the same firmware/storage
+ * owner, has verified the signed running firmware is OTA VALID and the exact
+ * retired inactive image can no longer boot. actual_set must contain only the
+ * running firmware. Retire that old binding only from IDLE/CONFIRMED, after
+ * checking all existing confirmed package references, and persist A-only as
+ * IDLE in the same ECS2 blob. An already IDLE A-only state with the current
+ * sequence is a validated no-op; a stale sequence is always a conflict.
+ * Container cannot inspect the receipt, app image or otadata itself. */
+econtainer_slots_result_t econtainer_slots_retire_inactive_firmware(
+    const econtainer_slots_io_t *io, const econtainer_slots_geometry_t *geometry,
+    uint32_t expected_sequence,
+    const econtainer_slot_firmware_set_t *actual_set,
+    const uint8_t retired_firmware_sha256[32],
+    econtainer_slots_state_t *state);
+
 /* After explicit abandonment and Base proof that the failed target is no
  * longer bootable, remove that inactive pending binding. Never erase a package
  * here. The only remaining binding must exactly match actual_set. */
