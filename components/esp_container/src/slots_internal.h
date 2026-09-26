@@ -1,7 +1,7 @@
 #ifndef ECONTAINER_SLOTS_INTERNAL_H
 #define ECONTAINER_SLOTS_INTERNAL_H
 
-#include "esp_container_slots.h"
+#include "esp_container_product.h"
 
 /* Package identity copied only from the durable record under the slot lock. */
 typedef struct {
@@ -11,21 +11,6 @@ typedef struct {
     uint32_t guest_abi_version;
     uint32_t data_schema_version;
 } econtainer_slot_package_t;
-
-typedef enum {
-    ECONTAINER_SLOT_SELECT_CONFIRMED,
-    ECONTAINER_SLOT_SELECT_TRIAL,
-} econtainer_slot_selection_t;
-
-typedef struct {
-    uint32_t expected_sequence;
-    econtainer_slot_firmware_set_t firmware_set;
-    econtainer_slot_selection_t selection;
-    /* TRIAL requires both exact IDs from the current boot's executor owner.
-     * CONFIRMED requires both arrays to be zero. */
-    uint8_t operation_id[ECONTAINER_SLOT_OPERATION_ID_BYTES];
-    uint8_t boot_id[ECONTAINER_SLOT_BOOT_ID_BYTES];
-} econtainer_slot_selection_request_t;
 
 typedef econtainer_slots_result_t (*econtainer_slot_selected_fn)(
     void *context, const econtainer_slot_package_t *package, uint32_t offset_bytes);

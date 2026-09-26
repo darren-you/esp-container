@@ -1,4 +1,4 @@
-idf_component_register(SRCS "src/wasm_scan.c" "src/package_wasm.c" "src/runtime.c" "src/slot_runtime.c"
+idf_component_register(SRCS "src/wasm_scan.c" "src/package_wasm.c" "src/runtime.c" "src/slot_runtime.c" "src/product.c"
     "src/package_stream.c" "src/package_slot.c" "src/package_crypto.c" "src/slots.c" "src/slots_idf.c"
     INCLUDE_DIRS "include" PRIV_INCLUDE_DIRS "src"
     REQUIRES esp_partition freertos

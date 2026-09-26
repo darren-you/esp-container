@@ -41,6 +41,10 @@ def main() -> None:
         current["required_capabilities"] = ["log", "monotonic-time"]
         (temporary / "host.pkg").write_bytes(signed_package(
             private, (guests / "host-api.wasm").read_bytes(), current))
+        current = copy.deepcopy(spec)
+        current["required_capabilities"] = ["timer"]
+        (temporary / "timer.pkg").write_bytes(signed_package(
+            private, (guests / "timer.wasm").read_bytes(), current))
         # The static scanner intentionally leaves UTF-8/custom-section loader
         # validation to WAMR. Admission succeeds; the real loader must fail cleanly.
         (temporary / "bad-loader.pkg").write_bytes(signed_package(

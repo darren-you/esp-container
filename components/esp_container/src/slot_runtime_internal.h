@@ -5,14 +5,6 @@
 #include "runtime_internal.h"
 #include "slots_internal.h"
 
-/* Storage/admission and engine outcomes remain distinct. Success requires both
- * fields == OK and a non-NULL runtime. runtime stays INVALID_STATE when storage
- * or admission failed before an engine attempt. No partial runtime escapes. */
-typedef struct {
-    econtainer_slots_result_t slots;
-    econtainer_runtime_result_t runtime;
-} econtainer_slot_runtime_result_t;
-
 /* Component-private synchronous bridge, on the unique pthread executor owner.
  * out must point to NULL. Base must hold its existing firmware/storage owner
  * around the call; every package writer must use io's same lock. The old

@@ -14,7 +14,7 @@ flowchart LR
     package --> slot_admission["package_slot_test：真实签名包写槽/回读授权"]
     slots --> slot_admission
     slot_admission --> ctest
-    slot_admission --> slot_runtime["slot_runtime_test：真实签名 P0-P3 / 锁内映射装载 / 并发写互斥"]
+    slot_admission --> slot_runtime["slot_runtime_test：公开产品 API / 真实签名 P0-P3 / 并发写互斥"]
     slots["slots_test.c：双固件集合 / 三槽保护 / NVS 断写"] --> ctest
     idf_slots["slots_idf_test.c：精确分区 / NVS commit / Flash 回调"] --> ctest
     scanner["esp_container/src/wasm_scan.c"] --> c["wasm_scan_test.c：section 与入口拒绝"]
@@ -52,7 +52,7 @@ Python 测试使用每次生成的 RSA-3072 临时测试密钥，覆盖确定性
 
 `package_slot` CTest 将真实临时签名包写入假 Flash 三槽，由槽引擎从实际候选槽回读，再执行签名、Wasm、产品身份、schema 和资源限额检查；错误产品、key ID、schema、内存、队列、指令预算、宿主期限均返回 `UNTRUSTED`，验签和 Wasm 静态扫描的二次读故障分别返回 `IO_FAILED`，均不得进入 PREPARED。该测试不证明设备真实分区或 Base 授权装配。
 
-同时提供锁定 WAMR 与 wasi-sdk 33 后新增 `slot_runtime` CTest。Python 在临时目录生成 RSA-3072 密钥，把真实编译 counter 签成 P0/P1/P2/P3；C 测试通过正常 `reserve → write_and_prepare → begin_trial → open/init/event/stop/close → mark_healthy → confirm` 更新两个固件的真实持久绑定，并保持旧固件 P0 可恢复。当前固件确认包可在未决候选损坏时重新验签启动；任一已确认固件引用损坏或读取失败仍阻止装载。
+同时提供锁定 WAMR 与 wasi-sdk 33 后的 `slot_runtime` CTest。Python 在临时目录生成 RSA-3072 密钥，把真实编译 counter 签成 P0/P1/P2/P3；C 测试只包含公开 `esp_container_product.h`，通过正常 `reserve → write_and_prepare → begin_trial → product_open/init/event/stop/close → mark_healthy → confirm` 更新两个固件的真实持久绑定，并保持旧固件 P0 可恢复。当前固件确认包可在未决候选损坏时重新验签启动；任一已确认固件引用损坏或读取失败仍阻止装载。宿主导入日志由公开 owner 接口读取；签名定时器包也经相同装载链，在真实解释器中验证截止时间、单次投递、停止后拒绝投递及映射清理。
 
 同一测试拒绝 PREPARED、HEALTH_VERIFIED、旧 boot、错误 operation/sequence/固件集合，拒绝映射成另一份完整合法签名包、错误产品、独立授权和超限 policy。映射使用真实只读 `mmap`，在返回实例之前立即 `munmap`；含非空 data 节的宿主导入 guest 随后仍读出 `init` 和 `first`。合法签名中 1 条指令、8 字节执行栈分别使 counter 触发指令额度和引擎栈失败，证明较大的平台默认值没有覆盖签名限额；非法平台栈、全局 runtime BUSY 和真实 WAMR loader 拒绝也必须清理映射且允许重新打开确认包。装载返回的 `slots` 与 `runtime` 两个结果分别断言，只有二者均为 OK 才执行 guest。映射失败不解映射，成功映射包括 NULL 指针的错误 provider 情形均恰好清理一次。两个 pthread 在映射建立后及 WAMR open 后通过条件变量安排真实竞争 `reserve/write_and_prepare`，两次均返回 BUSY，擦写计数不变；没有用睡眠猜测并发时序。
 
