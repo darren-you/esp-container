@@ -1,6 +1,6 @@
 # 三包槽存储软件检查点
 
-本检查点实现 `esp_container_slots.h` 的受控原始 Flash 包槽、单 blob 记录与双固件集合对账。它服务于跨仓计划 P6-08/P6-10 的软件切片，**尚不是可发布的包安装或双固件联合升级**。没有写入设备或修改真实分区表。
+本检查点实现 `esp_container_slots.h` 的受控原始 Flash 包槽、单 blob 记录与双固件集合对账，并加入联合固件/包切换的软件状态合同。它服务于跨仓计划 P6-08/P6-10 的软件切片，**尚不是可发布的包安装或双固件联合升级**。没有写入设备或修改真实分区表。
 
 ## 事实与边界
 
@@ -11,15 +11,27 @@
 - 任一擦除前重新读取记录、核对预期序号、全量计算两份已确认包摘要，并先把唯一候选槽写为 `WRITING`，完成 NVS commit/精确读回。一个包槽被任一已确认绑定或未决候选引用时不能被选为擦写目标。
 - 当前固件已有业务包时，product-only 更新要求候选 `data_schema_version` 精确相同；尚无包时可首次安装。产品 ID、签名密钥、ABI 与所需能力仍由验包/授权回调精确核对。
 - 写包时只擦已持久保留的槽，按提供的写粒度写入，不足末块补 `0xff`。写完从 Flash 重新计算**精确包长** SHA-256，再让调用方的只读回调完成签名、Wasm、产品授权与宿主 grant 检查；现有 `econtainer_package_slot_validate()` 可承担这段回读准入。回调区分校验期间的 Flash 读失败 `IO_FAILED` 和完整读取后的信任拒绝 `UNTRUSTED`。任何失败留在 `WRITING`，不能自动试运行；校验通过且 blob 读回一致后才进入 `PREPARED`。
-- `begin_trial` 在旧实例已停止回收之后、启动新实例之前持久记录 boot ID；`mark_healthy` 仅接受同一 boot ID；`confirm` 再读回受保护引用，并在单 blob 内替换该固件绑定。当前 API 仅处理同一实际固件下的 product-only 更新，不读写 `otadata`，不推断 OTA 固件 VALID。
-- 启动对账 `reconcile` 先重新计算两份确认包摘要，仅对运行固件摘要命中的绑定给出选择。`WRITING`、`PREPARED`、`TRIAL_STARTED`、`HEALTH_VERIFIED` 在新 boot 均只返回旧确认绑定，不会重启候选或自动提交。完整候选摘要或读取失败时，保留旧确认包选择和状态，同时返回原始 `UNTRUSTED`/`IO_FAILED` 与 `BOOT_RECOVER_CONFIRMED_CANDIDATE_INVALID`；调用方只能启动另行验证过的旧确认包，必须记录候选错误，不能自动推进或擦槽。确认包错误仍是 `BOOT_BLOCKED`。
+- `begin_trial` 在旧实例已停止回收之后、启动新实例之前持久记录 boot ID；`mark_healthy` 仅接受同一 boot ID；`confirm` 再读回受保护引用，并在单 blob 内确认该固件的包绑定。Container 不读写 `otadata`，也不能仅凭当前运行摘要推断 OTA 固件已 VALID；联合切换由 Base 在 `esp-ota` 确认 VALID 后才调用 `confirm`。
+- 启动对账 `reconcile` 先重新计算两份确认包摘要。product-only 未决操作继续返回旧确认绑定；联合固件操作在旧固件运行时也只允许恢复旧确认包，在新固件运行且状态为 `PREPARED` 时明确返回 `BOOT_START_TRIAL`，由 Base 生成本 boot ID 并先提交 `TRIAL_STARTED`。新固件运行但包仍在 `WRITING`、旧 trial 已跨 boot、已取消，或新固件确认后却运行旧固件，均返回 `CONFLICT/BOOT_BLOCKED`。候选损坏在旧固件运行时保留原始 `UNTRUSTED`/`IO_FAILED` 与 `BOOT_RECOVER_CONFIRMED_CANDIDATE_INVALID`；在新固件运行时保持 `BOOT_BLOCKED`。确认包错误也始终阻断。
 - `abandon` 为显式取消。不同 boot 可直接证明 RAM 中不存在前次试运行实例；同一 boot 必须由唯一执行器 owner 在持有存储锁期间调用 `trial_stopped_fn`，核对该 operation 的候选已停止、回调/原生引用已收敛。取消只依赖确认包完整性，被抛弃的候选字节即使损坏也不妨碍持久取消。取消后的新操作仍须取得不同 operation ID，并重新执行授权/验包。调用方在启动旧包前仍须验证签名、ABI、授权、数据 schema 和运行能力。
 
 ## 双固件集合对账软件切片
 
 `initialize`、`reconcile` 和 `reserve` 接受同一 `econtainer_slot_firmware_set_t`：一或两份实际可启动固件 SHA-256，以及其中正在运行的一份。集合不区分数组顺序；零摘要、重复、越界计数、运行固件不在集合均拒绝。已提交 blob 中的固件绑定必须与集合完全一致；旧固件已被 OTA 覆盖却仍留在绑定中，或新固件出现却没有绑定，启动选择返回 `BOOT_BLOCKED`，擦槽预留返回 `CONFLICT`。这不会自动删除旧包或把新固件判作已确认。摘要校验继续覆盖两份绑定，因此从当前固件启动也不能忽略回退固件的包损坏。
 
-这个参数必须由 Base 从实际 app 分区与 `otadata` 读取和校验；Base 还须把固件切换与包操作放在同一串行操作所有权下，确保集合快照在调用期间不变。Container 目前只核对调用方给出的值，无法自行证明物理可启动性、app 签名、OTA 状态或旧槽已经失去回退资格。联合更新需要另行实现受 OTA 状态约束的 prepared/trial/health/VALID/confirmed 转换；现有 `reserve`、`begin_trial` 和 `confirm` 仍只处理 product-only。物理分区几何没有因此确定，当前 Base 分区仍不能绑定包区。
+这个参数必须由 Base 从实际 app 分区与 `otadata` 读取和校验；Base 还须把固件切换与包操作放在同一串行操作所有权下，确保集合快照在调用期间不变。Container 目前只核对调用方给出的值，无法自行证明物理可启动性、app 签名、OTA 状态或旧槽已经失去回退资格。物理分区几何没有因此确定，当前 Base 分区仍不能绑定包区。
+
+## 联合固件与包切换的软件合同
+
+`stage_firmware` 仅在 Base 已将**签名验证通过**的新镜像写入原备用 app 槽、原备用镜像确实失去可启动资格、尚未选中新镜像时调用。调用方给出实际旧/新两份摘要、当前运行旧摘要、预期序号和全新 operation ID。Container 在原 288 字节单 blob 中硬切为 `ECS2`，同时更新备用固件绑定、记录 `firmware_transition` 和包决策；它没有第二份账本，也不会自动读取旧 `ECS1`。当前真板没有 Container blob，既有 Base NVS 不会由此擦除或迁移。
+
+- `PACKAGE_WRITE`：先在 blob 中持久预留未被旧运行固件绑定的槽，返回 `WRITING`；随后 `write_and_prepare` 才能擦槽、写包、全量回读摘要和用 `econtainer_package_slot_validate` 验签授权，成功后提交 `PREPARED`。被替换的旧备用固件及其包不再计入保护集，仍运行的旧固件包保持受保护。
+- `PACKAGE_REUSE`：只可引用旧运行固件的已确认包；`econtainer_package_slot_validate_binding` 按新固件的独立产品/grant 输入重新验签、检查 Wasm 与配额，单次提交备用固件无包绑定及 `PREPARED`；直到最终确认才共享该包槽，不复制 Flash。
+- `NO_PACKAGE`：明确记录新固件没有 guest，直接提交 `PREPARED`；试运行选择得到 `EMPTY`，健康与确认仍须由 Base 明确推进，不能把无包等同于固件健康。
+
+Base 只可在 `PREPARED` 持久读回后调用 OTA 选择；新镜像实际启动并经 Base 签名/otadata 核对后，按 `begin_trial → 业务健康验证 → mark_healthy → esp-ota 标记 VALID 并回读 → confirm` 顺序推进。`confirm` 不提供 OTA 状态证明，必须由调用方持有同一串行 owner 保证顺序。失败回到旧镜像时，Base 先显式 `abandon`，待实际 OTA 状态证明新目标不再可启动，才可用 `drop_aborted_firmware` 删除其绑定；这两个 API 都不擦包槽。读回不确定时不得选新镜像或擦槽，须重新读取唯一 blob 裁决。主机测试覆盖写包、复用真实签名包、无包、旧备用包损坏、错误授权、commit 不确定、旧 trial 重启阻断与失败回退；真实 OTA 调用和掉电验证仍未接入。
+
+2026-09-27 的独立工作树复核：锁定 WAMR 与 wasi-sdk 33 下主机 CTest **9/9**、Python unittest **运行 14 项，其中 1 项因工具链条件跳过，其余通过**；`slots`、`package_slot`、`slots_idf` 分别以严格 ASan/UBSan 运行通过。固定 IDF `578cf89` 的 C3 与 ESP32 独立样例编译通过，app 大小分别为 `0x37920`、`0x35000`，SHA-256 分别为 `0835366e7ecd1424c5b14772a0cf7e1f0edbe0206d0e3fac65e119aa5bd28c4f`、`ebee2fd8104ae9702f8ba2b3b8c46426df27a98dbeb4ce2dab0411e01b30e09c`。样例未装配 Base/FRP/MQTT/OTA，也未调用联合切换入口，故尺寸不代表产品组合余量。
 
 ## 三槽引用序列
 
@@ -31,13 +43,13 @@
 | P3 写入/试运行 | P0：槽 0 | P2：槽 2 | P3：槽 1 | 无 |
 | P3 确认 | P0：槽 0 | P3：槽 1 | 无 | 槽 2 |
 
-相同包摘要的共享槽可以留在两份固件绑定中；该槽的摘要、长度、ABI 与 schema 必须完全一致。本切片没有做共享包的下载去重。记录只保留两个固件摘要，且不会自行加入、淘汰或验证实际 OTA 槽的固件身份；联合升级时必须由 Base/esp-ota 扩展该状态转换并按计划第 9.7 节验证，不能直接复用 product-only `confirm`。
+相同包摘要的共享槽可以留在两份固件绑定中；该槽的摘要、长度、ABI 与 schema 必须完全一致。本切片没有做共享包的下载去重。记录只保留两个固件摘要；新增/淘汰绑定只能由 Base 已验证的实际 OTA 状态触发，不由 Container 猜测镜像身份。
 
 ## 已验证与待验
 
 主机 `slots` CTest 使用假 Flash/NVS 覆盖 P0→P3 引用变化、两份固件各自重启对账、错误/缺失/重复固件集合的启动与擦槽拒绝、超过实际单槽容量的候选拒绝、先提交保留再擦除、两种 commit 返回错误的保守裁决、blob 读回失败/CRC 损坏、部分写入、候选回读摘要损坏/断读、旧确认包可恢复但不可推进候选、同 boot 无停止证明拒绝取消/停止证明后取消、错序号/错固件与几何拒绝。原包解析和 Wasm 扫描 CTest 保持独立运行。
 
-新增 `package_slot` 主机测试把真实签名包、三槽假 Flash 回读和独立授权组合，并拒绝错误产品、schema、key ID、内存/队列/指令/期限及读故障。仍缺已冻结的真实包分区与 Base provider 装配、同 Flash 写入者独占、实际两份固件身份/状态对账、联合 OTA 阶段、产品操作账本、真实断电与 C3 实板的容量/时延/磨损验证。P6-06、P6-08、P6-10、P7-01 因此保持未验收。
+新增 `package_slot` 主机测试把真实签名包、三槽假 Flash 回读和独立授权组合，并拒绝错误产品、schema、key ID、内存/队列/指令/期限及读故障。联合状态合同增加复用时不同产品授权拒绝、按新固件再验证、写包先持久预留、无包试运行、旧 trial 跨 boot 阻断与回退测试。仍缺已冻结的真实包分区与 Base provider 装配、同 Flash 写入者独占、实际两份固件身份/状态对账、Base/esp-ota 调用链、产品操作账本、真实断电与 C3 实板的容量/时延/磨损验证。P6-06、P6-08、P6-10、P7-01 因此保持未验收。
 
 ## ESP-IDF provider 接线（2026-09-24）
 
