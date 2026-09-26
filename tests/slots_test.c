@@ -25,6 +25,7 @@ typedef struct {
     bool fail_flash_read;
     unsigned fail_flash_read_slot;
     bool trial_stopped;
+    unsigned blob_write_count;
     unsigned erase_count[ECONTAINER_SLOT_COUNT];
 } fake_store_t;
 
@@ -88,6 +89,7 @@ static bool fake_blob_write(void *context,
 {
     fake_store_t *store = context;
     assert(store->locked);
+    ++store->blob_write_count;
     if (store->fail_blob_write_before) {
         return false;
     }
@@ -888,6 +890,205 @@ static void test_rebind_after_other_firmware_product_update(void)
         state.bindings[1].present && !state.bindings[1].package_present);
 }
 
+static econtainer_slot_firmware_set_t only_firmware(uint8_t seed)
+{
+    econtainer_slot_firmware_set_t result = {.bootable_count = 1};
+    memset(result.bootable_firmware_sha256[0], seed, 32);
+    memset(result.running_firmware_sha256, seed, 32);
+    return result;
+}
+
+static void test_retire_inactive_firmware(void)
+{
+    fake_store_t store;
+    fixture_t p0, p1, p2;
+    seed_two_packages(&store, &p0, &p1);
+    const econtainer_slots_io_t io = fake_io(&store);
+    const econtainer_slot_firmware_set_t old_only = only_firmware(0xa0);
+    uint8_t retired[32];
+    memset(retired, 0xb0, sizeof(retired));
+    econtainer_slots_state_t state;
+    econtainer_slot_boot_decision_t decision;
+    assert(econtainer_slots_load(&io, &geometry, &state) == ECONTAINER_SLOTS_OK);
+    const uint32_t initial_sequence = state.sequence;
+    const unsigned initial_writes = store.blob_write_count;
+
+    uint8_t wrong_retired[32];
+    memset(wrong_retired, 0xc0, sizeof(wrong_retired));
+    assert(econtainer_slots_retire_inactive_firmware(&io, &geometry,
+        state.sequence, &old_only, wrong_retired, &state) == ECONTAINER_SLOTS_CONFLICT);
+    assert(econtainer_slots_retire_inactive_firmware(&io, &geometry,
+        state.sequence, &old_only, old_only.running_firmware_sha256,
+        &state) == ECONTAINER_SLOTS_INVALID);
+    econtainer_slot_firmware_set_t wrong_running = only_firmware(0xc0);
+    assert(econtainer_slots_retire_inactive_firmware(&io, &geometry,
+        state.sequence, &wrong_running, retired, &state) == ECONTAINER_SLOTS_CONFLICT);
+    econtainer_slot_firmware_set_t two_firmware = firmware_set(0xa0);
+    assert(econtainer_slots_retire_inactive_firmware(&io, &geometry,
+        state.sequence, &two_firmware, retired, &state) == ECONTAINER_SLOTS_INVALID);
+    assert(store.blob_write_count == initial_writes);
+
+    store.fail_flash_read_slot = 2;
+    assert(econtainer_slots_retire_inactive_firmware(&io, &geometry,
+        state.sequence, &old_only, retired, &state) == ECONTAINER_SLOTS_IO_FAILED);
+    store.fail_flash_read_slot = 0;
+    store.flash[SLOT_BYTES] ^= 1;
+    assert(econtainer_slots_retire_inactive_firmware(&io, &geometry,
+        state.sequence, &old_only, retired, &state) == ECONTAINER_SLOTS_UNTRUSTED);
+    store.flash[SLOT_BYTES] ^= 1;
+    store.flash[0] ^= 1;
+    assert(econtainer_slots_retire_inactive_firmware(&io, &geometry,
+        state.sequence, &old_only, retired, &state) == ECONTAINER_SLOTS_UNTRUSTED);
+    store.flash[0] ^= 1;
+    assert(store.blob_write_count == initial_writes);
+
+    store.fail_blob_write_before = true;
+    assert(econtainer_slots_retire_inactive_firmware(&io, &geometry,
+        state.sequence, &old_only, retired, &state) == ECONTAINER_SLOTS_IO_FAILED);
+    store.fail_blob_write_before = false;
+    assert(econtainer_slots_load(&io, &geometry, &state) == ECONTAINER_SLOTS_OK &&
+        state.sequence == initial_sequence && state.bindings[1].present);
+    store.fail_blob_write_after = true;
+    assert(econtainer_slots_retire_inactive_firmware(&io, &geometry,
+        state.sequence, &old_only, retired, &state) == ECONTAINER_SLOTS_UNCERTAIN);
+    store.fail_blob_write_after = false;
+    assert(econtainer_slots_retire_inactive_firmware(&io, &geometry,
+        initial_sequence, &old_only, retired, &state) == ECONTAINER_SLOTS_CONFLICT);
+    assert(econtainer_slots_load(&io, &geometry, &state) == ECONTAINER_SLOTS_OK &&
+        state.sequence == initial_sequence + 1U && state.phase == ECONTAINER_SLOT_IDLE &&
+        state.bindings[0].present && !state.bindings[1].present);
+    const unsigned retired_writes = store.blob_write_count;
+    assert(econtainer_slots_retire_inactive_firmware(&io, &geometry,
+        state.sequence, &old_only, retired, &state) == ECONTAINER_SLOTS_OK);
+    assert(state.sequence == initial_sequence + 1U &&
+        store.blob_write_count == retired_writes);
+    store.flash[0] ^= 1;
+    assert(econtainer_slots_retire_inactive_firmware(&io, &geometry,
+        state.sequence, &old_only, retired, &state) == ECONTAINER_SLOTS_UNTRUSTED);
+    store.flash[0] ^= 1;
+    assert(store.blob_write_count == retired_writes);
+    assert(econtainer_slots_reconcile(&io, &geometry, &old_only,
+        &state, &decision) == ECONTAINER_SLOTS_OK &&
+        decision == ECONTAINER_SLOT_BOOT_CONFIRMED);
+    assert(store.erase_count[0] == 0 && store.erase_count[1] == 0);
+
+    /* Retiring B leaves a valid A-only starting point for the next A/C OTA. */
+    econtainer_slot_firmware_set_t prepared = prepared_firmware(0xa0);
+    econtainer_slot_operation_t candidate = {0};
+    candidate.kind = ECONTAINER_SLOT_NO_PACKAGE;
+    candidate.operation_id[0] = 12;
+    memset(candidate.target_firmware_sha256, 0xc0, 32);
+    assert(econtainer_slots_stage_firmware(&io, &geometry, state.sequence,
+        &prepared, &candidate, NULL, NULL, &state) == ECONTAINER_SLOTS_OK);
+    assert(state.phase == ECONTAINER_SLOT_PREPARED &&
+        state.bindings[0].present && state.bindings[1].present);
+
+    /* CONFIRMED product history may target the retired B. It must be cleared. */
+    seed_two_packages(&store, &p0, &p1);
+    make_fixture(&p2, 12);
+    apply_product(&store, &p2, 13, 2);
+    assert(econtainer_slots_load(&io, &geometry, &state) == ECONTAINER_SLOTS_OK);
+    assert(state.phase == ECONTAINER_SLOT_CONFIRMED &&
+        memcmp(state.operation.target_firmware_sha256, retired, 32) == 0);
+    assert(econtainer_slots_retire_inactive_firmware(&io, &geometry,
+        state.sequence, &old_only, retired, &state) == ECONTAINER_SLOTS_OK);
+    assert(state.phase == ECONTAINER_SLOT_IDLE &&
+        !state.bindings[1].present && state.operation.operation_id[0] == 0 &&
+        memcmp(store.flash, p0.bytes, p0.length) == 0 &&
+        store.erase_count[0] == 0 && store.erase_count[2] == 1);
+}
+
+static void test_retire_rejects_pending_and_bad_storage(void)
+{
+    fake_store_t store;
+    fixture_t p0, p1, p2;
+    seed_two_packages(&store, &p0, &p1);
+    const econtainer_slots_io_t io = fake_io(&store);
+    const econtainer_slot_firmware_set_t old_only = only_firmware(0xa0);
+    const econtainer_slot_firmware_set_t bootable = firmware_set(0xb0);
+    uint8_t retired[32];
+    memset(retired, 0xb0, sizeof(retired));
+    econtainer_slots_state_t state;
+    make_fixture(&p2, 12);
+    const econtainer_slot_operation_t candidate = operation(2, 0xb0, &p2);
+    assert(econtainer_slots_load(&io, &geometry, &state) == ECONTAINER_SLOTS_OK);
+    assert(econtainer_slots_reserve(&io, &geometry, state.sequence,
+        &bootable, &candidate, &state) == ECONTAINER_SLOTS_OK);
+    const unsigned writes = store.blob_write_count;
+    assert(econtainer_slots_retire_inactive_firmware(&io, &geometry,
+        state.sequence, &old_only, retired, &state) == ECONTAINER_SLOTS_CONFLICT);
+    assert(store.blob_write_count == writes);
+    assert(econtainer_slots_write_and_prepare(&io, &geometry, state.sequence,
+        source_read, &p2, validate_readback, &p2, &state) == ECONTAINER_SLOTS_OK);
+    assert(econtainer_slots_retire_inactive_firmware(&io, &geometry,
+        state.sequence, &old_only, retired, &state) == ECONTAINER_SLOTS_CONFLICT);
+    uint8_t boot_id[ECONTAINER_SLOT_BOOT_ID_BYTES] = {2};
+    uint8_t target[32];
+    memset(target, 0xb0, sizeof(target));
+    assert(econtainer_slots_begin_trial(&io, &geometry, state.sequence,
+        target, boot_id, &state) == ECONTAINER_SLOTS_OK);
+    assert(econtainer_slots_retire_inactive_firmware(&io, &geometry,
+        state.sequence, &old_only, retired, &state) == ECONTAINER_SLOTS_CONFLICT);
+    assert(econtainer_slots_mark_healthy(&io, &geometry, state.sequence,
+        boot_id, &state) == ECONTAINER_SLOTS_OK);
+    assert(econtainer_slots_retire_inactive_firmware(&io, &geometry,
+        state.sequence, &old_only, retired, &state) == ECONTAINER_SLOTS_CONFLICT);
+    store.trial_stopped = true;
+    assert(econtainer_slots_abandon(&io, &geometry, state.sequence,
+        boot_id, trial_stopped_proof, &store, &state) == ECONTAINER_SLOTS_OK);
+    assert(econtainer_slots_retire_inactive_firmware(&io, &geometry,
+        state.sequence, &old_only, retired, &state) == ECONTAINER_SLOTS_CONFLICT);
+
+    seed_two_packages(&store, &p0, &p1);
+    assert(econtainer_slots_load(&io, &geometry, &state) == ECONTAINER_SLOTS_OK);
+    store.fail_blob_read = true;
+    assert(econtainer_slots_retire_inactive_firmware(&io, &geometry,
+        state.sequence, &old_only, retired, &state) == ECONTAINER_SLOTS_IO_FAILED);
+    store.fail_blob_read = false;
+    store.fail_lock = true;
+    assert(econtainer_slots_retire_inactive_firmware(&io, &geometry,
+        state.sequence, &old_only, retired, &state) == ECONTAINER_SLOTS_BUSY);
+    store.fail_lock = false;
+    store.blob[0] ^= 1;
+    assert(econtainer_slots_retire_inactive_firmware(&io, &geometry,
+        state.sequence, &old_only, retired, &state) == ECONTAINER_SLOTS_INVALID);
+}
+
+static void test_retire_commit_readback_failures(void)
+{
+    fake_store_t store;
+    fixture_t p0, p1;
+    econtainer_slots_state_t state;
+    const econtainer_slot_firmware_set_t old_only = only_firmware(0xa0);
+    uint8_t retired[32];
+    memset(retired, 0xb0, sizeof(retired));
+
+    seed_two_packages(&store, &p0, &p1);
+    econtainer_slots_io_t io = fake_io(&store);
+    assert(econtainer_slots_load(&io, &geometry, &state) == ECONTAINER_SLOTS_OK);
+    const uint32_t sequence = state.sequence;
+    store.fail_read_after_write = true;
+    assert(econtainer_slots_retire_inactive_firmware(&io, &geometry,
+        sequence, &old_only, retired, &state) == ECONTAINER_SLOTS_UNCERTAIN);
+    store.fail_read_after_write = false;
+    assert(econtainer_slots_load(&io, &geometry, &state) == ECONTAINER_SLOTS_OK &&
+        state.sequence == sequence + 1U && !state.bindings[1].present);
+    const unsigned writes = store.blob_write_count;
+    assert(econtainer_slots_retire_inactive_firmware(&io, &geometry,
+        state.sequence, &old_only, retired, &state) == ECONTAINER_SLOTS_OK &&
+        store.blob_write_count == writes);
+
+    seed_two_packages(&store, &p0, &p1);
+    io = fake_io(&store);
+    assert(econtainer_slots_load(&io, &geometry, &state) == ECONTAINER_SLOTS_OK);
+    store.corrupt_blob_write = true;
+    assert(econtainer_slots_retire_inactive_firmware(&io, &geometry,
+        state.sequence, &old_only, retired, &state) == ECONTAINER_SLOTS_UNCERTAIN);
+    store.corrupt_blob_write = false;
+    assert(econtainer_slots_load(&io, &geometry, &state) == ECONTAINER_SLOTS_INVALID);
+    assert(store.erase_count[0] == 0 && store.erase_count[1] == 0);
+}
+
 int main(void)
 {
     test_four_packages();
@@ -901,6 +1102,9 @@ int main(void)
     test_firmware_no_package_and_rollback();
     test_firmware_write_before_boot();
     test_rebind_after_other_firmware_product_update();
+    test_retire_inactive_firmware();
+    test_retire_rejects_pending_and_bad_storage();
+    test_retire_commit_readback_failures();
     puts("slots: protected P0/P1/P2/P3, durable commit, torn Flash and restart checks passed");
     return 0;
 }

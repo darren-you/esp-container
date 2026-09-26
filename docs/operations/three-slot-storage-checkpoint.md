@@ -31,6 +31,14 @@
 
 Base 只可在 `PREPARED` 持久读回后调用 OTA 选择；新镜像实际启动并经 Base 签名/otadata 核对后，按 `begin_trial → 业务健康验证 → mark_healthy → esp-ota 标记 VALID 并回读 → confirm` 顺序推进。`confirm` 不提供 OTA 状态证明，必须由调用方持有同一串行 owner 保证顺序。若在 `HEALTH_VERIFIED` 后复位，`reconcile` 对运行中的目标固件仍返回 `CONFLICT/BOOT_BLOCKED`，不能重启 trial；只有 Base 独立读回目标签名固件为 OTA `VALID`、持久记录与真实固件/包相符并完成本次本地启动基本检查，才可使用记录中原 trial boot ID 补交 `confirm`，不能重放外部业务动作。若状态仍为 pending、记录不匹配或完整性检查失败，保持阻断。失败回到旧镜像时，Base 先显式 `abandon`，待实际 OTA 状态证明新目标不再可启动，才可用 `drop_aborted_firmware` 删除其绑定；这两个 API 都不擦包槽。读回不确定时不得选新镜像或擦槽，须重新读取唯一 blob 裁决。主机测试覆盖写包、复用真实签名包、无包、旧备用包损坏、错误授权、commit 不确定、旧 trial 重启阻断与失败回退；真实 OTA 调用和掉电验证仍未接入。
 
+### 中断写入后的旧备用绑定退役
+
+`econtainer_slots_retire_inactive_firmware` 服务于 OTA 下载已开始改写备用 app 槽、但尚未形成可启动候选的恢复路径。Base 必须在调用前独立核对持久 OTA 写入收据、正在运行的旧固件 A 的签名与 OTA `VALID`、原备用固件 B 的精确摘要，以及物理 app/otadata 中 B 已不可启动的证据；同时持有与 OTA、包槽共用的固件/存储 owner。Container 只收到 A-only 的实际可启动集合、被退役的 B 摘要和预期 blob 序号，不能自行验证这些外部事实。
+
+该入口在槽锁内只接受 `IDLE` 或 `CONFIRMED`，核对 A/B 绑定、两份已确认包的完整 SHA-256 引用，然后把 B 绑定和已完成 operation 一起清为 `IDLE`，以同一个 ECS2 blob 提交并读回。它不擦除包槽，不自动继续下载，也不改变 OTA 状态；完成后现有 `stage_firmware` 可从 A-only 进入新的 A/C `PREPARED`。任何未决相位、错 B、错 A、错序号、损坏包/记录和未知持久写入结果均不得退役。对于已是 `IDLE` 的 A-only 状态，使用**当前**序号调用时会重新核对 A 包后无写入返回；这仅是安全重入，不证明历史 B 身份或外部 OTA 收据。旧序号仍返回冲突。commit 或读回结果不明时，Base 必须重新读取 blob 与物理证据后裁决，不能直接重试写 app。
+
+主机假 Flash/NVS 测试覆盖 A/B→A、`CONFIRMED` 历史记录清除、A-only 重入、随后 A/C 准备、WRITING/PREPARED/TRIAL_STARTED/HEALTH_VERIFIED/ABORTED 拒绝、错误固件集合、两份包引用损坏、读故障、锁忙、commit 前/后故障、读回失败及撕裂 blob。独立工作树在 AppleClang 的严格 ASan/UBSan 下完成本机 CTest **6/6**。此软件入口本身尚未证明 Base 收据与 app/otadata 物理状态对账或掉电恢复。
+
 2026-09-27 的独立工作树复核：锁定 WAMR 与 wasi-sdk 33 下主机 CTest **9/9**、Python unittest **运行 14 项，其中 1 项因工具链条件跳过，其余通过**；`slots`、`package_slot`、`slots_idf` 分别以严格 ASan/UBSan 运行通过。固定 IDF `578cf89` 的 C3 与 ESP32 独立样例编译通过，app 大小分别为 `0x37920`、`0x35000`，SHA-256 分别为 `0835366e7ecd1424c5b14772a0cf7e1f0edbe0206d0e3fac65e119aa5bd28c4f`、`ebee2fd8104ae9702f8ba2b3b8c46426df27a98dbeb4ce2dab0411e01b30e09c`。样例未装配 Base/FRP/MQTT/OTA，也未调用联合切换入口，故尺寸不代表产品组合余量。
 
 ## 三槽引用序列

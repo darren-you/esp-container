@@ -818,6 +818,62 @@ econtainer_slots_result_t econtainer_slots_stage_firmware(
     return result;
 }
 
+econtainer_slots_result_t econtainer_slots_retire_inactive_firmware(
+    const econtainer_slots_io_t *io, const econtainer_slots_geometry_t *geometry,
+    uint32_t expected_sequence,
+    const econtainer_slot_firmware_set_t *actual_set,
+    const uint8_t retired_firmware_sha256[32],
+    econtainer_slots_state_t *state)
+{
+    if (!io_valid(io) || !econtainer_slots_geometry_valid(geometry) ||
+        !firmware_set_valid(actual_set) || actual_set->bootable_count != 1U ||
+        retired_firmware_sha256 == NULL || all_zero(retired_firmware_sha256, 32) ||
+        memcmp(retired_firmware_sha256, actual_set->running_firmware_sha256, 32) == 0 ||
+        state == NULL) {
+        return ECONTAINER_SLOTS_INVALID;
+    }
+    if (!io->lock(io->context)) return ECONTAINER_SLOTS_BUSY;
+    econtainer_slots_state_t current;
+    econtainer_slots_result_t result = begin_locked(io, geometry, expected_sequence, &current);
+    const int running_index = result == ECONTAINER_SLOTS_OK ?
+        binding_for_firmware(&current, actual_set->running_firmware_sha256) : -1;
+    if (result == ECONTAINER_SLOTS_OK &&
+        (running_index < 0 ||
+         (current.phase != ECONTAINER_SLOT_IDLE &&
+          current.phase != ECONTAINER_SLOT_CONFIRMED))) {
+        result = ECONTAINER_SLOTS_CONFLICT;
+    }
+    if (result == ECONTAINER_SLOTS_OK) {
+        const econtainer_slot_binding_t *inactive = &current.bindings[1 - running_index];
+        if (inactive->present &&
+            memcmp(inactive->firmware_sha256, retired_firmware_sha256, 32) != 0) {
+            result = ECONTAINER_SLOTS_CONFLICT;
+        } else if (!inactive->present &&
+                   (current.phase != ECONTAINER_SLOT_IDLE ||
+                    !firmware_set_matches(&current, actual_set))) {
+            result = ECONTAINER_SLOTS_CONFLICT;
+        }
+    }
+    if (result == ECONTAINER_SLOTS_OK) {
+        result = check_references(io, geometry, &current, false);
+    }
+    if (result == ECONTAINER_SLOTS_OK) {
+        if (!current.bindings[1 - running_index].present) {
+            *state = current;
+        } else {
+            econtainer_slots_state_t next = current;
+            next.bindings[1 - running_index] = (econtainer_slot_binding_t){0};
+            next.phase = ECONTAINER_SLOT_IDLE;
+            next.operation = (econtainer_slot_operation_t){0};
+            result = firmware_set_matches(&next, actual_set) ?
+                     commit_next(io, geometry, &current, &next, state) :
+                     ECONTAINER_SLOTS_CONFLICT;
+        }
+    }
+    io->unlock(io->context);
+    return result;
+}
+
 econtainer_slots_result_t econtainer_slots_drop_aborted_firmware(
     const econtainer_slots_io_t *io, const econtainer_slots_geometry_t *geometry,
     uint32_t expected_sequence,
