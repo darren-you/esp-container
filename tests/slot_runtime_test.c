@@ -1,4 +1,4 @@
-#include "slot_runtime_internal.h"
+#include "esp_container_product.h"
 
 #include <assert.h>
 #include <openssl/sha.h>
@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <time.h>
 
 enum { FLASH_BASE = 0x10000, SLOT_BYTES = 32768, FLASH_BYTES = 3 * SLOT_BYTES };
 typedef struct { uint8_t *bytes; size_t size; } file_t;
@@ -262,7 +263,7 @@ static econtainer_slot_selection_request_t request_for(fixture_t *fixture, bool 
 static econtainer_slot_runtime_result_t open_request(fixture_t *fixture,
     const econtainer_slot_selection_request_t *request, econtainer_runtime_t **runtime)
 {
-    return econtainer_slot_runtime_open(&fixture->io, &geometry, request,
+    return econtainer_product_open(&fixture->io, &geometry, request,
         &fixture->validation, &fixture->limits, runtime);
 }
 
@@ -320,13 +321,13 @@ static void run_counter(fixture_t *fixture, bool trial)
     fixture->validation.verified_info = &fixture->info;
     assert(result.slots == ECONTAINER_SLOTS_OK && result.runtime == ECONTAINER_RUNTIME_OK);
     assert(runtime != NULL && fixture->store.mapping == NULL && !fixture->store.locked);
-    assert(econtainer_runtime_init(runtime) == ECONTAINER_RUNTIME_OK);
+    assert(econtainer_product_init(runtime) == ECONTAINER_RUNTIME_OK);
     const uint8_t event[] = {1, 2, 3};
     int32_t value = -1;
-    assert(econtainer_runtime_on_event(runtime, event, sizeof(event), &value) == ECONTAINER_RUNTIME_OK);
+    assert(econtainer_product_on_event(runtime, event, sizeof(event), &value) == ECONTAINER_RUNTIME_OK);
     assert(value == 3);
-    assert(econtainer_runtime_stop(runtime) == ECONTAINER_RUNTIME_OK);
-    assert(econtainer_runtime_close(&runtime) == ECONTAINER_RUNTIME_OK && runtime == NULL);
+    assert(econtainer_product_stop(runtime) == ECONTAINER_RUNTIME_OK);
+    assert(econtainer_product_close(&runtime) == ECONTAINER_RUNTIME_OK && runtime == NULL);
 }
 
 static bool stopped(void *context, const uint8_t *operation_id)
@@ -372,9 +373,10 @@ int main(int argc, char **argv)
     assert(argc == 2);
     file_t key = read_file(argv[1], "public.der");
     const char *names[] = {"p0.pkg", "p1.pkg", "p2.pkg", "p3.pkg",
-                           "host.pkg", "budget.pkg", "stack.pkg", "bad-loader.pkg"};
-    file_t packages[8];
-    for (unsigned index = 0; index < 8; ++index) packages[index] = read_file(argv[1], names[index]);
+                           "host.pkg", "budget.pkg", "stack.pkg", "bad-loader.pkg",
+                           "timer.pkg"};
+    file_t packages[9];
+    for (unsigned index = 0; index < 9; ++index) packages[index] = read_file(argv[1], names[index]);
     fixture_t *fixture = malloc(sizeof(*fixture));
     assert(fixture != NULL);
     initialize(fixture, &key);
@@ -465,8 +467,8 @@ int main(int argc, char **argv)
     assert(result.slots == ECONTAINER_SLOTS_OK && result.runtime == ECONTAINER_RUNTIME_OK);
     result = open_request(fixture, &request, &second);
     assert(result.slots == ECONTAINER_SLOTS_OK && result.runtime == ECONTAINER_RUNTIME_BUSY && second == NULL);
-    assert(econtainer_runtime_init(runtime) == ECONTAINER_RUNTIME_OK);
-    assert(econtainer_runtime_close(&runtime) == ECONTAINER_RUNTIME_OK);
+    assert(econtainer_product_init(runtime) == ECONTAINER_RUNTIME_OK);
+    assert(econtainer_product_close(&runtime) == ECONTAINER_RUNTIME_OK);
     for (unsigned index = 4; index < 8; ++index) {
         prepare(fixture, &packages[index]);
         begin_trial(fixture);
@@ -488,28 +490,54 @@ int main(int argc, char **argv)
         } else {
             assert(result.runtime == ECONTAINER_RUNTIME_OK && runtime != NULL);
             assert(fixture->store.mapping == NULL && !fixture->store.locked);
-            const econtainer_runtime_result_t initialized = econtainer_runtime_init(runtime);
+            const econtainer_runtime_result_t initialized = econtainer_product_init(runtime);
             if (index == 4) {
                 assert(initialized == ECONTAINER_RUNTIME_OK);
                 uint8_t log[16]; size_t size = 0;
-                assert(econtainer_runtime_take_log(runtime, log, sizeof(log), &size) == ECONTAINER_RUNTIME_OK);
+                assert(econtainer_product_take_log(runtime, log, sizeof(log), &size) == ECONTAINER_RUNTIME_OK);
                 assert(size == 4 && memcmp(log, "init", 4) == 0);
                 const uint8_t event = 2; int32_t value = 0;
-                assert(econtainer_runtime_on_event(runtime, &event, 1, &value) == ECONTAINER_RUNTIME_OK);
+                assert(econtainer_product_on_event(runtime, &event, 1, &value) == ECONTAINER_RUNTIME_OK);
                 assert(value == -2);
-                assert(econtainer_runtime_take_log(runtime, log, sizeof(log), &size) == ECONTAINER_RUNTIME_OK);
+                assert(econtainer_product_take_log(runtime, log, sizeof(log), &size) == ECONTAINER_RUNTIME_OK);
                 assert(size == 5 && memcmp(log, "first", 5) == 0);
-                assert(econtainer_runtime_stop(runtime) == ECONTAINER_RUNTIME_OK);
+                assert(econtainer_product_stop(runtime) == ECONTAINER_RUNTIME_OK);
             } else if (index == 5) {
                 assert(initialized == ECONTAINER_RUNTIME_INSTRUCTION_LIMIT);
             } else {
                 assert(initialized == ECONTAINER_RUNTIME_ENGINE_FAILURE);
             }
-            assert(econtainer_runtime_close(&runtime) == ECONTAINER_RUNTIME_OK);
+            assert(econtainer_product_close(&runtime) == ECONTAINER_RUNTIME_OK);
         }
         abandon(fixture);
         run_counter(fixture, false);
     }
+    /* Public owner-driven timer delivery uses the same signed slot path. */
+    fixture->limits.max_timers = 2;
+    prepare(fixture, &packages[8]);
+    begin_trial(fixture);
+    request = request_for(fixture, true);
+    runtime = NULL;
+    result = open_request(fixture, &request, &runtime);
+    assert(result.slots == ECONTAINER_SLOTS_OK && result.runtime == ECONTAINER_RUNTIME_OK);
+    assert(runtime != NULL && !fixture->store.locked && fixture->store.mapping == NULL);
+    assert(econtainer_product_init(runtime) == ECONTAINER_RUNTIME_OK);
+    uint64_t deadline_ms = 0;
+    assert(econtainer_product_next_timer_deadline(runtime, &deadline_ms) == ECONTAINER_RUNTIME_NO_TIMER);
+    const uint8_t schedule = 'A';
+    int32_t guest_result = -1;
+    assert(econtainer_product_on_event(runtime, &schedule, 1, &guest_result) == ECONTAINER_RUNTIME_OK);
+    assert(guest_result == 0);
+    assert(econtainer_product_next_timer_deadline(runtime, &deadline_ms) == ECONTAINER_RUNTIME_OK);
+    econtainer_timer_event_t timer_event = {0};
+    struct timespec wait = {.tv_sec = 0, .tv_nsec = 40000000};
+    assert(nanosleep(&wait, NULL) == 0);
+    assert(econtainer_product_poll_timer(runtime, &timer_event, &guest_result) == ECONTAINER_RUNTIME_OK);
+    assert(timer_event.handle != 0 && guest_result == 10);
+    assert(econtainer_product_stop(runtime) == ECONTAINER_RUNTIME_OK);
+    assert(econtainer_product_poll_timer(runtime, &timer_event, &guest_result) == ECONTAINER_RUNTIME_INVALID_STATE);
+    assert(econtainer_product_close(&runtime) == ECONTAINER_RUNTIME_OK && runtime == NULL);
+    abandon(fixture);
     assert(fixture->store.mapped == fixture->store.unmapped && !fixture->store.locked);
     assert(pthread_cond_destroy(&fixture->store.condition) == 0);
     assert(pthread_mutex_destroy(&fixture->store.gate) == 0);
@@ -517,7 +545,7 @@ int main(int argc, char **argv)
     printf("slot_runtime: P0-P3, exact identity/grants, transient mappings=%u, competing writers, real WAMR passed\n",
            fixture->store.mapped);
     free(fixture);
-    for (unsigned index = 0; index < 8; ++index) free(packages[index].bytes);
+    for (unsigned index = 0; index < 9; ++index) free(packages[index].bytes);
     free(key.bytes);
     return 0;
 }

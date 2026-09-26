@@ -5,55 +5,16 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "esp_container.h"
+#include "esp_container_product.h"
 
 /* Component-private execution seam. Package verification and installation are
  * separate prerequisites; Base must never receive this raw-module interface. */
-typedef struct econtainer_runtime econtainer_runtime_t;
-
-typedef struct {
-    uint32_t max_wasm_bytes;
-    uint32_t max_memory_pages;
-    uint32_t stack_size_bytes;
-    uint32_t max_event_bytes;
-    uint32_t allowed_capabilities;
-    uint32_t max_log_bytes;
-    uint32_t max_timers;
-    int32_t init_instruction_budget;
-    int32_t event_instruction_budget;
-    int32_t stop_instruction_budget;
-    /* Bounds accepted results, not synchronous WAMR/SDK return latency. */
-    uint32_t max_entry_duration_ms;
-} econtainer_runtime_limits_t;
-
-typedef enum {
-    ECONTAINER_RUNTIME_OK = 0,
-    ECONTAINER_RUNTIME_INVALID_INPUT,
-    ECONTAINER_RUNTIME_BUSY,
-    ECONTAINER_RUNTIME_INVALID_STATE,
-    ECONTAINER_RUNTIME_BAD_WASM,
-    ECONTAINER_RUNTIME_BAD_ABI,
-    ECONTAINER_RUNTIME_NO_MEMORY,
-    ECONTAINER_RUNTIME_ENGINE_FAILURE,
-    ECONTAINER_RUNTIME_INSTRUCTION_LIMIT,
-    ECONTAINER_RUNTIME_GUEST_FAILURE,
-    ECONTAINER_RUNTIME_NO_LOG,
-    ECONTAINER_RUNTIME_NO_TIMER,
-    ECONTAINER_RUNTIME_NOT_AUTHORIZED,
-    ECONTAINER_RUNTIME_ENTRY_EXPIRED,
-} econtainer_runtime_result_t;
-
 typedef enum {
     ECONTAINER_RUNTIME_LOADED,
     ECONTAINER_RUNTIME_RUNNING,
     ECONTAINER_RUNTIME_STOPPED,
     ECONTAINER_RUNTIME_FAILED,
 } econtainer_runtime_state_t;
-
-typedef struct {
-    uint64_t handle;
-    uint32_t skipped_periods;
-} econtainer_timer_event_t;
 
 /* Runtime-private handle allocator. A canceled handle is never reissued during
  * this process lifetime. UINT64_MAX is the final valid value; zero is terminal. */
