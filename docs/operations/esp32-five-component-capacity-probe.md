@@ -76,7 +76,7 @@ espsecure verify-signature --version 1 --keyfile "$test_key" \
 
 ## 明确未验边界
 
-- `esp-frp/src/handshake.c:156` 的登录 JSON wire 字段当前固定为 `"arch":"riscv32"`。本探针没有创建 FRP session 或连接官方 FRPS，未验证服务端是否校验、展示或转发该值，也不推断 ESP32 的官方期待值。ESP32 实际联网前需在 FRP 仓独立修正并做双目标 wire／样例／官方 FRPS 回归；本容量探针保留 FRP 精确源码不改。
+- 本探针锁定的 `esp-frp@533e294` 把登录 JSON wire 字段固定为 `"arch":"riscv32"`；后续 `esp-frp@36e1506` 已按 ESP32 target 修正为 `xtensa`，并完成双目标 host 官方握手互操作，但没有进入本轮容量镜像。本探针没有创建 FRP session 或连接官方 FRPS，未验证服务端对该值的运行处理；ESP32 实际联网仍须用修正后的精确版本完成真机 FRPS/TLS 回归。
 - mac-work-1 当前只有 Espressif `qemu-riscv32`，Homebrew `qemu-system-xtensa -machine help` 没有 ESP32 machine。因此本轮不能得到 ESP32 guest 与 FRP/MQTT/OTA 并发的 free heap、最大连续块、栈和 TLS 资源读数；静态 DRAM 的 70,806 B 余量不是运行时可用堆或 64 KiB 完整 FRP 记录验收。
 - 探针把真实组件入口深链接，并在临时 `app_main` 调用 guest 生命周期，但没有持久包槽绑定、实际签名包写入／读取或所有网络会话。临时测试签名键、实验配置与候选分区均没有进入产品仓，也没有写入两台设备。
 - `0x120000` app 槽对于缩减版还有 `0x2000c` 余量；产品 Container 公开安装入口、真实业务接线和后续增长可能继续占用。P6-03 仍需真实组合负载、三槽实际包、两目标各自运行资源表；P7-01 仍需签名双固件和完整恢复基线。
