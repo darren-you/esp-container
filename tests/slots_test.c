@@ -855,6 +855,30 @@ static void test_firmware_write_before_boot(void)
         memcmp(store.flash + SLOT_BYTES, p2.bytes, p2.length) == 0);
 }
 
+static void test_rebind_after_other_firmware_product_update(void)
+{
+    fake_store_t store;
+    fixture_t p0, p1, p2;
+    seed_two_packages(&store, &p0, &p1);
+    make_fixture(&p2, 12);
+    apply_product(&store, &p2, 9, 2);
+    const econtainer_slots_io_t io = fake_io(&store);
+    econtainer_slots_state_t state;
+    assert(econtainer_slots_load(&io, &geometry, &state) == ECONTAINER_SLOTS_OK);
+    assert(state.phase == ECONTAINER_SLOT_CONFIRMED &&
+        !state.operation.firmware_transition);
+    const econtainer_slot_firmware_set_t prepared = prepared_firmware(0xa0);
+    econtainer_slot_operation_t candidate = {0};
+    candidate.kind = ECONTAINER_SLOT_NO_PACKAGE;
+    candidate.operation_id[0] = 10;
+    memset(candidate.target_firmware_sha256, 0xc0, 32);
+    assert(econtainer_slots_stage_firmware(&io, &geometry, state.sequence,
+        &prepared, &candidate, NULL, NULL, &state) == ECONTAINER_SLOTS_OK);
+    assert(state.phase == ECONTAINER_SLOT_PREPARED &&
+        state.bindings[0].package_present && state.bindings[0].slot == 0 &&
+        state.bindings[1].present && !state.bindings[1].package_present);
+}
+
 int main(void)
 {
     test_four_packages();
@@ -867,6 +891,7 @@ int main(void)
     test_guards();
     test_firmware_no_package_and_rollback();
     test_firmware_write_before_boot();
+    test_rebind_after_other_firmware_product_update();
     puts("slots: protected P0/P1/P2/P3, durable commit, torn Flash and restart checks passed");
     return 0;
 }
