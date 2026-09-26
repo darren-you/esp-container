@@ -716,6 +716,7 @@ econtainer_slots_result_t econtainer_slots_stage_firmware(
           current.phase != ECONTAINER_SLOT_CONFIRMED &&
           current.phase != ECONTAINER_SLOT_ABORTED) ||
          (current.phase == ECONTAINER_SLOT_CONFIRMED &&
+          current.operation.firmware_transition &&
           memcmp(current.operation.target_firmware_sha256,
                  prepared_set->running_firmware_sha256, 32) != 0))) {
         result = ECONTAINER_SLOTS_CONFLICT;
