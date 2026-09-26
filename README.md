@@ -63,7 +63,7 @@ host 工具的包格式和使用步骤见 [包工具](tools/README.md)。[只读
 
 [C3 Wi-Fi IRAM 两项开关的 QEMU 容量对照](docs/operations/c3-wifi-iram-qemu-ab.md)记录同输入实验中完整 AEAD reader 与一页 guest 的结果及实际 FRP 会话仍未闭合的内存缺口。
 
-[ESP32 五组件认证 QEMU 容量探针](docs/operations/esp32-authenticated-qemu-capacity-probe.md)记录 Base READY 后单页 guest 与完整 AEAD 记录的同存读数；[ESP32 Wi-Fi IRAM 两项开关对照](docs/operations/esp32-wifi-iram-qemu-ab.md)记录相同输入下关闭两项后 IRAM 减少但动态堆不变的结果。两项均为离线仿真证据。
+[ESP32 五组件认证 QEMU 容量探针](docs/operations/esp32-authenticated-qemu-capacity-probe.md)记录 Base READY 后单页 guest 与完整 AEAD 记录的同存读数；[ESP32 Wi-Fi IRAM 两项开关对照](docs/operations/esp32-wifi-iram-qemu-ab.md)记录相同输入下关闭两项后 IRAM 减少但动态堆不变的结果；[ESP32 EXEC／32BIT 能力池探针](docs/operations/esp32-exec-pool-qemu-probe.md)记录同阶段纯 IRAM、共享 D/IRAM 与不同对齐请求的真实申请。三项均为离线仿真证据。
 
 ## 项目边界
 
