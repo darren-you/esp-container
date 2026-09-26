@@ -1,12 +1,42 @@
 # ESP32-D0WD-V3 五组件签名容量探针：2026-09-26
 
-## 结论
+## 2026-09-26 当前五仓精确锁复测
+
+上一轮 `0xffff4` 镜像使用 Base `bcde4832`、FRP `533e294`、OTA `5da4a0d`，**不是**当前五仓组合。本轮在 mac-work-1 的仓外新目录 `/private/tmp/esp32-five-exact-20260926`，从下表 Git 提交逐份导出源码，再复制为独立 ESP32 工程；FRP／MQTT／OTA／Container 组件源码均与各自归档逐文件一致。没有使用工作树中的未提交更改，也没有接设备或串口。
+
+| 输入 | 精确提交 | `git archive --format=tar \| gzip -n` 的 SHA-256 |
+| --- | --- | --- |
+| Base | `058e965671fa0e4d417114897541710699571c52` | `5dd4ee1bc055f80e1cbea1029471b167f7ee91eecc0ec0d870728ea3ddd99e1e` |
+| FRP | `36e1506a2145321fc292294de59c0aa4532f73a7` | `cb8da748b88beb06539ed790eee834aab55a03165215aeed0ecfd3c5cd2b0d3b` |
+| MQTT | `9d6d95e779f4f5ff387a6d9b54015bf4e43565f2` | `9a23528c250e158392b8cbe592c232d70869f199e8b` |
+| OTA | `207273188b984161362824c3344614e812016836` | `ec27b304eaa7b573dc978c789673a39292b3f2fe37806e07981769f199e8b110` |
+| Container | `8eb805f3f12cb3cd836e9833acb4aca878ae80e7` | `bbde8a28677171fc2c728c77fa9049ae77b2b2055c948b2272a57d320f50e235` |
+
+固定 ESP-IDF 实际 HEAD 为 `578cf89c343e388db43ba1f4ddcd602fedcb763c`，其 lwIP 源码实际 HEAD 为 `2758df4cd3666b3b2a5b53830148379326425c0d`；SDK 根目录唯一状态差异是预定的 lwIP gitlink 从 `c6f2f87` 指向该固定版本，lwIP 自身工作树干净。仓外工程从上表 Base 的真实 ESP32 CSV、`sdkconfig.defaults.esp32` 和 OTA policy 构建，只在副本主应用增加 `volatile` 默认 false 的静态链接门；这个门下引用 FRP TLS／分块 AEAD、MQTT start、OTA HTTPS/preflight、Container runtime/slot runtime/slots IDF provider/Base 固件集合适配及 WAMR Classic。它不会进入实际调用路径。仓外装配脚本 SHA-256 为 `cf3b1517acd3e617497be7a7da7325aa72259ac0c61cd9d50c3418a943d2b3a3`，注入的 `capacity_references.c` SHA-256 为 `68f9dedcb7f501827ac9553790452d4d4faaaa5473fe0bb5ad1a6624bc0c23da`；测试 P-256 私钥和全部镜像只留在仓外，不入库。
+
+本轮 `-DIDF_TARGET=esp32 -DESP_BASE_CONTAINER_BINDING_PROBE=ON` 全量构建通过，完整构建日志 SHA-256 为 `4972ac1554a2d9d197f43d498874e419b11cbd5dfc0904ca983e5170dfcf9726`；生成 `dependencies.lock.esp32` SHA-256 为 `d8b748c3bdaade4d83b4245ba775cc329e256a56a8434d77bf9bff4a3e34b57c`，记录本地五组件源码、`target: esp32` 和 WAMR `26c235e53e29acd8b43abe7f3b524577bd4d1ae5`。最终 `sdkconfig` 确认 ECDSA v1 软件签名的 boot/update 验签、rollback、STA-only、TLS client-only 和 Classic/normal WAMR；CMake profile 启用指令计量。硬件 Secure Boot 未启用。ELF 符号表分别保留 `efrp_tls_step`、`efrp_aead_reader_init_chunked`、`esp_mqtt_client_start`、`eota_preflight`、`eota_http_transport_create`、`econtainer_runtime_open`、`econtainer_slot_runtime_open`、`econtainer_slots_idf_bind`、`econtainer_slots_reconcile`、`econtainer_slots_write_and_prepare`、`esp_base_container_reconcile` 和 `wasm_interp_call_wasm`；ELF 字符串含 ESP32 对应的 `xtensa`。
+
+| 项目 | 旧组合的缩减版 | 当前精确锁 |
+| --- | ---: | ---: |
+| ECDSA v1 signed app | `0xffff4`，SHA-256 `9763b55620f5c9a12301b66c299f92d0d0be298568e05348ae6fcf715efdc08c` | **1,048,564 B／`0xffff4`**，SHA-256 `32cc57e32883985a64c9ca3a477e5161b73103337f7aa380c9fdb7f5967fc3f4` |
+| 未签名 app | 1,048,496 B | 1,048,496 B，SHA-256 `d93c79d885e23e974f2bc8601c76ff9044a6a7fea630109281ef040b7c132d5a` |
+| `0x120000` 单 app 槽剩余 | `0x2000c` | **131,084 B／`0x2000c`**；两个等长 app 槽均满足 |
+| Flash Code／Data | 728,716／210,304 B | 728,984／208,960 B |
+| 静态 DRAM 已用／可用 | 109,930／70,806 B | 109,922／70,814 B |
+| 静态 IRAM 已用／可用 | 81,223／49,849 B | 81,223／49,849 B |
+| 已保留的 Container／FRP／OTA archive | 16,302／25,385／6,483 B | 17,459／25,361／6,688 B |
+
+镜像虽然与旧组合落在同一个签名长度台阶，SHA、ELF 符号和静态资源账本不同；旧 `0xffff4` **没有被沿用为新版本尺寸证据**。archive 差异还包含链接入口变化，不能单独解释成某一个组件源码的增减。固定 SDK 的 `espsecure verify-signature --version 1 --keyfile <仓外测试键>` 对本轮 app 返回 `Signature is valid`；官方 `check_sizes.py partition --type app` 报告最小 `0x120000` 槽剩余 `0x2000c`。Base 的真实 ESP32 CSV SHA-256 为 `f3f29e52f2ed0ccb3fbb3faf9e3d978d359aa9a958c2b3a6120399af70f11b73`，固定 SDK `gen_esp32part.py --flash-size 4MB --secure v1 --disable-md5sum` 接受它；生成的未签名 3,072 字节表与构建分区表前缀逐字节一致，构建表另有 68 字节 ECDSA v1 签名，官方验签也通过。构建分区表 SHA-256 `aa5d0153914e5c1faecd9fbe31f5e65c8af940911992bd273b3ba130c1d0a576`。bootloader 为 `0x5b10` B，官方检查在 `0x8000` 分区表前还余 `0x14f0` B。
+
+这是一份**静态容量收据**，不证明网络三会话、64 KiB guest 与 Base 同时运行后的堆／最大连续块、三份真实签名业务包安装运行、上电签名启动、OTA 回滚、旧 AT 数据迁移或新分区的实板持久状态。仓外 `volatile` 门内传占位参数，只允许链接，不能作为运行探针刷板。P6-03、P7-01 和双目标完整容量合同仍未验收；本轮没有修改 Base/Container 产品源码、生产密钥或设备 Flash。
+
+## 旧组合结论（历史）
 
 ESP32-D0WD-V3 的仓外五组件深链接镜像已在固定 ESP-IDF 中完成 ECDSA v1 测试键签名和正式工具验签。基线 signed bin 为 **`0x10fff4`**；关闭未使用的 Wi-Fi SoftAP、只保留 TLS client 后为 **`0xffff4`**。两者均装得进本轮离线候选的两个 `0x120000` app 槽，分别余 `0x1000c` 和 `0x2000c` 字节。后者静态 DRAM 只减少 160 字节，不能据镜像缩减量推断运行堆。
 
-**P6-03 与 P7-01 均未验收。** 当前 ESP32 产品构建守卫仍阻断正式镜像；此探针的 OTA 策略和入口改动只在仓外副本中。没有 ESP32 QEMU 动态读数、真实 Wi-Fi／MQTT／FRP／OTA 会话、Wasm 包槽执行、签名启动与回滚实板验证，也没有写板或触碰串口。
+**P6-03 与 P7-01 均未验收。** 当时 ESP32 产品构建守卫仍阻断正式镜像；此探针的 OTA 策略和入口改动只在仓外副本中。没有 ESP32 QEMU 动态读数、真实 Wi-Fi／MQTT／FRP／OTA 会话、Wasm 包槽执行、签名启动与回滚实板验证，也没有写板或触碰串口。
 
-## 精确输入与实验差分
+## 旧组合输入与实验差分
 
 | 输入 | 固定版本 |
 | --- | --- |
