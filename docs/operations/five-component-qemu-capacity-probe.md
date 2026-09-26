@@ -1,6 +1,52 @@
 # 五组件链接的 C3 QEMU guest 容量切片：2026-09-23
 
-## 判定
+## 2026-09-27：当前精确锁的完整 AEAD 认证与一页 guest 同存
+
+**结论：P6-03 继续未验收。** 当前精确五仓的无网络 C3 QEMU 中，Base READY 后一页 64 KiB ABI 2 guest 存活，8-bit heap free／最大连续块为 **65,480／45,056 字节**。真实 FRP 分块 reader 对两条完整 4 KiB AES-GCM 测试记录分别认证成功、逐字节核对 4,096 字节并释放，读数两次都回到 65,480／45,056；篡改 tag 得到 `EFRP_AUTHENTICATION_FAILED=-11`，也完整释放。随后投喂完整 64 KiB 合法测试 wire 时，在 reader 读完 12 字节 nonce 和 4 字节合法长度头后，第 15 个 4 KiB 块申请失败，返回 `EFRP_NO_MEMORY=-20`，已有 14 块全部释放，读数仍回到 65,480／45,056。**这条 READY 后的满长记录未进入密文/tag 认证，不能写成 64 KiB 收发成功。** 同一镜像在 Base 初始化前、guest 已存活时，对完整 64 KiB wire 的认证和 65,536 字节逐字节核对成功；两个时点不可互换。
+
+| 输入 | 精确源码／收据 |
+| --- | --- |
+| Base | `058e965671fa0e4d417114897541710699571c52`；`git archive \| gzip -n` SHA-256 `5dd4ee1bc055f80e1cbea1029471b167f7ee91eecc0ec0d870728ea3ddd99e1e` |
+| FRP | `36e1506a2145321fc292294de59c0aa4532f73a7`；归档 SHA-256 `cb8da748b88beb06539ed790eee834aab55a03165215aeed0ecfd3c5cd2b0d3b` |
+| MQTT | `9d6d95e779f4f5ff387a6d9b54015bf4e43565f2`；归档 SHA-256 `9a23528c250e158392b8cbe592c232d70869f199e8b` |
+| OTA | `207273188b984161362824c3344614e812016836`；归档 SHA-256 `ec27b304eaa7b573dc978c789673a39292b3f2fe37806e07981769f199e8b110` |
+| Container | `8eb805f3f12cb3cd836e9833acb4aca878ae80e7`；归档 SHA-256 `bbde8a28677171fc2c728c77fa9049ae77b2b2055c948b2272a57d320f50e235`；FRP／MQTT／OTA／Container 复制后的组件与各自归档 `diff -qr` 均为 0 |
+| SDK／WAMR／QEMU | ESP-IDF `578cf89c343e388db43ba1f4ddcd602fedcb763c`；实际 lwIP `2758df4cd3666b3b2a5b53830148379326425c0d`；生成 `dependencies.lock` 中 `target: esp32c3`、WAMR `26c235e53e29acd8b43abe7f3b524577bd4d1ae5`；官方 C3 QEMU 9.2.2 可执行文件 SHA-256 `3e38982c1ea3e750edfc8c910a0fd44727fe07d9c666b84d18d2b7985ac58246` |
+| guest／测试记录 | 469 字节合法 ABI 2 固定单页 guest，经本仓 `counter_guest.py check` 通过，SHA-256 `b9422cb4cb72983141988c4a9a59b602026d94729e2362403a04d1723f98a739`；32 字节公开测试 key、按位置 `(i*37+11)&255` 生成明文和不同测试 nonce，由 AES-GCM 生成 4 KiB／64 KiB 完整 wire，SHA-256 分别为 `2855df4bd4199f7ce21526c33bcc0b21776adf4d6e5b9f631e43491ea9d30e20`／`35979812621d6b6778c4086f937991353cfa7f73a4c1aa60dfcfc5507b2542aa` |
+| 仓外探针输入 | [装配脚本](prepare_exact_five_component_auth_qemu.py) SHA-256 `b0adb0cc1b5faead35ae3f6e868780e8c68bae9fc6f51459b49ba70710e5bbb8`；[完整认证探针](frp_authenticated_capacity_probe.c) SHA-256 `b1526168e0f0db1a21869a485bd7dc165cdfcbe37e0637ea9d9e0534bf80ea1f`；QEMU ADC2 空桩 SHA-256 `4ac43d342012326befab8e69245de93caf102e939cafa8028d07cfc238757b1e`；生成 `sdkconfig`／`dependencies.lock` SHA-256 `cb4911792bf9fc1191e4dfc90ff04e483e880ed6800a455f590e594c5ce6b62d`／`63259c2444b89238187a778563a6b52f873a5448e32eb1ac5b8d10b4b3763948` |
+
+所有五仓源码由精确 Git 归档重新解到 mac-work-1 的 `/private/tmp/esp32c3-five-dynamic-exact-20260927`，普通工作树没有被修改。仓外 Base 副本保持当前 C3 的 STA-only／TLS client-only 默认配置，只把主控制台换成 QEMU 可见 UART0、以临时 RSA-3072 测试键签名、链接 Container/WAMR/Base 适配，并在 `app_main` 早期和 READY 后各进入一次 guest 探针。FRP 加密测试 wire 只存在于镜像 Flash rodata；读回后由真实 `efrp_aead_plaintext` 分块取得，逐字节比较并调用真实 `efrp_aead_consume_plaintext`；reader 销毁两次，记录每块分配／释放与堆值。`sdkconfig` 最终核对 `esp32c3`、UART0、SoftAP 关闭、TLS client-only、软件 RSA v2 签名和 WAMR Classic/normal loader。签名 app 为 `0x121000` 字节、SHA-256 `50f76c011367a076e8ff175aafc4371858576d83a7cc22fd15026e67762ce0e3`，固定 SDK 的 RSA v2 官方验签通过；这个长度仍属于旧 C3 双 app 表，**不代表**三包槽新布局可装入。
+
+首次构建时，旧探针的 `adc2_cal_include` 空桩作为 main 静态库对象解析得太晚，SDK 的 `adc2_init_cal.c.obj` 仍被拉入 ELF。首次 QEMU 日志 SHA-256 `51b421ec7ce721bc1cea79765b2fc537e29a83713223be5a54e5ddc3e7e8fdb2`，启动停在 `app_main` 前；GDB 回溯为 `adc_oneshot_ll_get_event → read_cal_channel → adc_hal_self_calibration → adc_calc_hw_calibration_code → adc2_init_code_calibration → __libc_init_array`。仅在仓外 QEMU 副本中把相同空桩改为 `esp_base.elf` 的直接对象、从 main 的 `SRCS` 移出；最终 map 将 `adc2_cal_include` 归于 `CMakeFiles/esp_base.elf.dir/apps/esp_base/main/qemu_adc2_stub.c.obj`，ELF 不再含 `adc2_init_code_calibration`。重建日志 SHA-256 `1005aa9dd2d183e54ad751d5cad1c60b54f3a08dcaa3d23682c5b884569c4177`，成功 QEMU 日志 SHA-256 `e8bfe76270d5e75d92fbeb9e81c991b5dd3a78f5e29dc2bca0ff73476323afee`，45 秒后宿主主动 SIGTERM，日志无 panic。此空桩是仿真绕过硬件 ADC2 校准，**最终镜像绝不可刷实体板**，也不能把仿真射频视为实板事实。
+
+| 同一 QEMU boot 的时点 | free／最大连续块（字节） | 结果 |
+| --- | ---: | --- |
+| Base 初始化前，进入 guest 前 → guest `on_event` 后 | 201,516／114,688 → 123,844／59,392 | guest `open/init/event` 均 0，counter 返回 3 |
+| 早期 guest 存活，完整 64 KiB FRP wire | 认证期间 57,036／45,056；reader 销毁后 122,636／57,344 | `feed=0`、`records=1`、逐字节核对 65,536／65,536、16 分配／16 释放 |
+| Base 初始化前 guest 关闭后 → `ESP_BASE_READY` 后 | 200,204／114,688 → 151,412／114,688 | guest `stop/close` 均 0；Base 报 `provisioned=false`、Wi-Fi/MQTT/FRP 未配置、FRP sessions=0 |
+| READY 后再次进入 guest → `on_event` 后 | 143,048／114,688 → **65,480／45,056** | guest `open/init/event` 均 0，counter 返回 3 |
+| READY + guest：完整 4 KiB，连续两次 | 每次认证期间 61,380／45,056；销毁后 **65,480／45,056** | 两次均 `feed=0`、`records=1`、逐字节核对 4,096／4,096、1 分配／1 释放 |
+| READY + guest：4 KiB 坏 tag | 销毁后 **65,480／45,056** | `EFRP_AUTHENTICATION_FAILED=-11`、`records=0`、1 分配／1 释放，无明文交付 |
+| READY + guest：完整 64 KiB wire | 第 15 次分配失败；清理后 **65,480／45,056** | `EFRP_NO_MEMORY=-20`，只消费 16 字节合法前缀，14 分配／14 释放、峰值已分配 57,344 B，**未完成认证** |
+| 第二次 guest 与 pthread 关闭后 | **151,412／114,688** | `stop/close=0`，探针预期检查失败数 0；启动以来 free 低水位 7,248 B |
+
+早期首条 64 KiB 认证后，free 较进入 reader 前少 1,208 B，最大连续块少 2,048 B；本轮不能确定该首用差异的组件来源。READY 后两次完整 4 KiB 认证、坏 tag 和满长申请失败的各自清理都回到进入前的 **65,480／45,056**，没有看到持续下降。`min_since_boot` 是低水位，不会在释放后回升。QEMU 的完整 wire 认证只验证真实 FRP reader 与密码库在测试 key/记录上的本地行为；没有建立 FRP session、TLS、FRPS、MQTT Broker 或 OTA 下载，也未运行真实业务包安装／槽保护。Base 未配置 Wi-Fi，不能从此推断网络并发峰值或实板容量；不更改 FRP 64 KiB 协议上限和 Container 单页约束。
+
+可在上述仓外目录用这份[装配脚本](prepare_exact_five_component_auth_qemu.py)和[探针源码](frp_authenticated_capacity_probe.c)重建原始输入。脚本要求五份精确源码位于 `*-src`、上一轮仓外 QEMU 工程仍保有受锁 WAMR/cJSON、ABI 2 guest 头、ADC2 空桩和测试 RSA 键；它会按代码中的确定性规则重新生成两份 wire。首次构建用于保留上述启动阻断证据。成功变体另在仓外副本对 CMake 做下列**仅限 QEMU**的链接顺序修改，再以固定 SDK 构建、验签并调用本仓 [QEMU 运行脚本](frp_chunked_qemu.py)；不执行 `flash`：
+
+```python
+main_cmake = firmware / "apps/esp_base/main/CMakeLists.txt"
+main_cmake.write_text(main_cmake.read_text().replace(' "qemu_adc2_stub.c"', '', 1))
+root_cmake = firmware / "CMakeLists.txt"
+root_cmake.write_text(root_cmake.read_text().replace(
+    'project(${ESP_BASE_PROJECT})',
+    'project(${ESP_BASE_PROJECT})\n'
+    'target_sources(${ESP_BASE_PROJECT}.elf PRIVATE apps/esp_base/main/qemu_adc2_stub.c)', 1))
+```
+
+上述代码中的 `firmware` 指仓外 `probe/firmware` 路径。原始和重建日志分别保留在仓外 `build.log`、`qemu.log`、`rebuild.log`、`qemu-2.log`；本轮仓外源码拷贝、签名键和二进制没有进入 Git。其他历次 QEMU 数据仍按各自精确版本阅读，不能替代本轮完整认证结果。
+
+## 历史判定：2026-09-23
 
 P6-03 **未验收**。仓外临时工程将 ESP Base 普通固件与 FRP、MQTT、OTA、Container 和 WAMR 的代表性入口链接到同一 ESP32-C3 镜像。官方 C3 QEMU 中，固定 128 KiB counter guest 在实例化时因连续内存不足失败；另一个仅将 guest 初始和最大内存改为 64 KiB 的实验候选，在 Base 初始化前及 Base 报告 READY 后各完成一次 `open → init → event → stop → close`。这证明当前仓外软件组合至少存在一个可运行的 64 KiB guest 切片，**不冻结**产品的 guest 内存、包大小或分区上限。
 
