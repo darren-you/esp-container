@@ -1,6 +1,11 @@
+import argparse
 from pathlib import Path
 
-source = Path('/private/tmp/esp32c3-frp-lazy-exact-20260927/probe-header/firmware/apps/esp_base/main/capacity_runtime_probe.c')
+parser = argparse.ArgumentParser(description='仅对显式指定的仓外 C 容量探针插入 QEMU 头部采样')
+parser.add_argument('probe_c', type=Path, help='待修改的 capacity_runtime_probe.c 文件')
+source = parser.parse_args().probe_c
+if source.name != 'capacity_runtime_probe.c' or not source.is_file():
+    parser.error('请传入已有的 capacity_runtime_probe.c 文件')
 text = source.read_text()
 before = '''        const size_t limit = wire_length - (tamper ? 1U : 0U);
         while (offset < limit) {'''

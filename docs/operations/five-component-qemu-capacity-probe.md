@@ -27,7 +27,14 @@
 
 ### 补充镜像：QEMU 恰好 16 字节头的直接采样
 
-为补齐主镜像首笔 1024 字节输入的观测边界，另从本轮新 FRP 的仓外 `probe` 复制 `probe-header`，仅用[头部仪表脚本](instrument_frp_header_qemu.py)把 READY 阶段满长 wire 的首笔拆成恰好 16 字节、记录分配和堆读数，然后继续同一完整 wire。脚本 SHA-256 `b2250f7ccc2c727aaf72454d01231018ff6e3770d66b4632c8293750efc87027`；补充 C 探针 SHA-256 `09604f79ace6c3d43be2e9a8f3f71331efadd48b01456cf1e69423fa49d9b921`。两份新 FRP 工程排除 `build` 和该探针后逐文件 `diff -qr` 无差异。补充 app SHA-256 `692444c31aee840077ae306efda792b19a119a5294fb80c1328420e0fab445a3`，同一 RSA 测试键验签通过，`sdkconfig`／本地路径型锁摘要仍与主镜像相同；补充构建日志 SHA-256 `5aac371b74b262bb776db83806ab72efce752676c5c0c888c814945e410a7add`。
+为补齐主镜像首笔 1024 字节输入的观测边界，另从本轮新 FRP 的仓外 `probe` 复制 `probe-header`，只修改 C 测试探针：把 READY 阶段满长 wire 的首笔拆成恰好 16 字节、记录分配和堆读数，然后继续同一完整 wire。**原始构建时**使用的仓外临时生成脚本 SHA-256 `b2250f7ccc2c727aaf72454d01231018ff6e3770d66b4632c8293750efc87027`；进入构建的补充 C 探针 SHA-256 `09604f79ace6c3d43be2e9a8f3f71331efadd48b01456cf1e69423fa49d9b921`。两份新 FRP 工程排除 `build` 和该探针后逐文件 `diff -qr` 无差异。补充 app SHA-256 `692444c31aee840077ae306efda792b19a119a5294fb80c1328420e0fab445a3`，同一 RSA 测试键验签通过，`sdkconfig`／本地路径型锁摘要仍与主镜像相同；补充构建日志 SHA-256 `5aac371b74b262bb776db83806ab72efce752676c5c0c888c814945e410a7add`。
+
+**公开脚本复核在上述 QEMU 运行之后执行，没有重建镜像。**现仓库的[头部仪表脚本](instrument_frp_header_qemu.py)改为必须显式传入 `capacity_runtime_probe.c` 文件，SHA-256 `d21d68a5a9772a309ae90af668fc0111fe6b58ee144050cdc6d9c5fe73277cd0`。在 mac-work-1 的独立仓外目录，将原探针（SHA-256 `b1526168e0f0db1a21869a485bd7dc165cdfcbe37e0637ea9d9e0534bf80ea1f`）复制为 `header-repro/capacity_runtime_probe.c`，把公开脚本复制到同目录后运行下列命令。新生成文件 SHA-256 为 `09604f79ace6c3d43be2e9a8f3f71331efadd48b01456cf1e69423fa49d9b921`，与原补充镜像的 C 文件 `cmp` 逐字节一致。未传参数时 CLI 返回 2 并提示必填文件。其他仓外目录只需向公开脚本传入其目标 C 文件的绝对路径。
+
+```bash
+python3 /private/tmp/esp32c3-frp-lazy-exact-20260927/header-repro/instrument_frp_header_qemu.py \
+  /private/tmp/esp32c3-frp-lazy-exact-20260927/header-repro/capacity_runtime_probe.c
+```
 
 补充 QEMU 日志 SHA-256 `bb5607179f84ce734deec22aefb00258dbe0735959885e257f6c7a0d43803b0d`，直接记录 `header_only feed=0 consumed=16 alloc=0 live=0 before=65480/45056 after=65480/45056`；继续投喂剩余密文后仍于第 15 块返回 `-20`，最终 `consumed=57360`、14 分配／14 释放、清理后 `65480/45056`，探针失败数 0。15 秒后宿主主动停止 QEMU，未见 panic。**此镜像只用于确认目标 QEMU 的头阶段零分配；由于测试探针改变了 feed 边界，上表的新旧 FRP 容量比较仍只使用未修改探针的主镜像。**
 
