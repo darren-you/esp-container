@@ -1,0 +1,188 @@
+[1/4] cd /tmp/esp32-frps-session-qemu-20260927/probe-sntp/firmware/build && /Users/darrenyou/.espressif/python_env/idf6.1_py3.14_env/bin/python /Users/darrenyou/.cache/darren-space/esp-idf-578cf89/components/partition_table/check_sizes.py --offset 0x8000 partition --type app /tmp/esp32-frps-session-qemu-20260927/probe-sntp/firmware/build/partition_table/partition-table.bin /tmp/esp32-frps-session-qemu-20260927/probe-sntp/firmware/build/esp_base.bin
+esp_base.bin binary size 0x11fff4 bytes. Smallest app partition is 0x120000 bytes. 0xc bytes (0%) free.
+Warning: The smallest app partition is nearly full (0% free space left)!
+[2/4] Performing build step for 'bootloader'
+[1/1] cd /tmp/esp32-frps-session-qemu-20260927/probe-sntp/firmware/build/bootloader && /Users/darrenyou/.espressif/python_env/idf6.1_py3.14_env/bin/python /Users/darrenyou/.cache/darren-space/esp-idf-578cf89/components/partition_table/check_sizes.py --offset 0x8000 bootloader 0x1000 /tmp/esp32-frps-session-qemu-20260927/probe-sntp/firmware/build/bootloader/bootloader.bin
+Bootloader binary size 0x5b10 bytes. 0x14f0 bytes (19%) free.
+[3/4] No install step for 'bootloader'
+[4/4] Completed 'bootloader'
+Generating flash image: /private/tmp/esp32-frps-session-qemu-20260927/probe-sntp/firmware/build/qemu_flash.bin
+esptool --chip=esp32 merge-bin --output=/private/tmp/esp32-frps-session-qemu-20260927/probe-sntp/firmware/build/qemu_flash.bin --pad-to-size=4MB --flash-mode dio --flash-freq 40m --flash-size 4MB 0x1000 bootloader/bootloader.bin 0x8000 partition_table/partition-table.bin 0x10000 ota_data_initial.bin 0x20000 esp_base.bin
+esptool v5.4.0
+HINT: Consider using --format hex to avoid flashing unused 0xFF padding between input regions.
+SHA digest in image updated.
+Wrote 0x400000 bytes to file '/private/tmp/esp32-frps-session-qemu-20260927/probe-sntp/firmware/build/qemu_flash.bin', ready to flash to offset 0x0.
+Using existing efuse image: /private/tmp/esp32-frps-session-qemu-20260927/probe-sntp/firmware/build/qemu_efuse.bin
+Running qemu (fg): qemu-system-xtensa -M esp32 -m 4M -drive file=/private/tmp/esp32-frps-session-qemu-20260927/probe-sntp/firmware/build/qemu_flash.bin,if=mtd,format=raw -drive file=/private/tmp/esp32-frps-session-qemu-20260927/probe-sntp/firmware/build/qemu_efuse.bin,if=none,format=raw,id=efuse -global driver=nvram.esp32.efuse,property=drive,value=efuse -global driver=timer.esp32.timg,property=wdt_disable,value=true -nic user,model=open_eth -nographic -serial mon:stdio -no-reboot
+Adding SPI flash device
+ets Jul 29 2019 12:21:46
+
+rst:0x1 (POWERON_RESET),boot:0x12 (SPI_FAST_FLASH_BOOT)
+configsip: 0, SPIWP:0xee
+clk_drv:0x00,q_drv:0x00,d_drv:0x00,cs0_drv:0x00,hd_drv:0x00,wp_drv:0x00
+mode:DIO, clock div:2
+load:0x3fff0040,len:1728
+load:0x40078000,len:18392
+load:0x40080400,len:3096
+entry 0x40080574
+I (1668) cpu_start: Multicore app
+I (2671) cpu_start: GPIO 3 and 1 are used as console UART I/O pins
+I (2673) cpu_start: Pro cpu start user code
+I (2674) cpu_start: cpu freq: 160000000 Hz
+I (2674) app_init: Application information:
+I (2674) app_init: Project name:     esp_base
+I (2674) app_init: App version:      0.2.0
+I (2674) app_init: Compile time:     Sep 27 2026 03:42:56
+I (2674) app_init: ELF file SHA256:  2a28e7263...
+I (2675) app_init: ESP-IDF:          578cf89c-dirty
+I (2675) efuse_init: Min chip rev:     v0.0
+I (2675) efuse_init: Max chip rev:     v3.99
+I (2675) efuse_init: Chip rev:         v3.0
+I (2676) heap_init: Initializing. RAM available for dynamic allocation:
+I (2676) heap_init: At 3FFAE6E0 len 00001920 (6 KiB): DRAM
+I (2676) heap_init: At 3FFCAEF0 len 00015110 (84 KiB): DRAM
+I (2677) heap_init: At 3FFE0440 len 00003AE0 (14 KiB): D/IRAM
+I (2677) heap_init: At 3FFE4350 len 0001BCB0 (111 KiB): D/IRAM
+I (2677) heap_init: At 4008DA84 len 0001257C (73 KiB): IRAM
+I (2693) spi_flash: detected chip: gd
+I (2696) spi_flash: flash io: dio
+I (2706) main_task: Started on CPU0
+I (2706) main_task: Calling app_main()
+I (2706) five-capacity-auth: heap phase=before_guest free=193900 largest=110592 min=193900
+I (2706) five-capacity-auth: heap phase=guest_opened free=116220 largest=57344 min=116220
+I (2706) five-capacity-auth: heap phase=guest_event_done free=116220 largest=57344 min=116220
+I (2706) five-capacity-auth: frp_record run=1 label=early_max plain=65536 init=0 feed=0 consumed=65568 records=1 compare=65536 auth=1 expected=1 alloc=16 released=16 alloc_fail=0 peak=65536 live=0 before=116220/57344 during=49796/43008 after=115396/57344
+I (2706) five-capacity-auth: heap phase=guest_closed free=192972 largest=110592 min=49340
+I (2706) five-capacity-auth: result run=1 open=0 init=0 event=0 stop=0 close=0 guest=3 failures=0
+I (2706) five-capacity-auth: probe_summary runs=1 failures=0
+I (3056) base_safety: hardware outputs remain untouched; reset_reason=power_on
+I (3736) esp_base: ESP_BASE_BOOT project=ESP Base device_id=<redacted> version=0.2.0 idf=578cf89c-dirty chip=ESP32 revision=3.0 flash=4194304 slot=ota_0 reset=power_on config_generation=0
+I (3816) wifi:wifi driver task: 3ffd3168, prio:23, stack:6656, core=0
+I (3816) wifi:wifi firmware version: e12a754
+I (3816) wifi:wifi certification version: v7.0
+I (3816) wifi:config NVS flash: disabled
+I (3816) wifi:config nano formatting: disabled
+I (3816) wifi:Init data frame dynamic rx buffer num: 32
+I (3816) wifi:Init static rx mgmt buffer num: 5
+I (3816) wifi:Init management short buffer num: 32
+I (3816) wifi:Init dynamic tx buffer num: 32
+I (3816) wifi:Init static rx buffer size: 1600
+I (3816) wifi:Init static rx buffer num: 10
+I (3816) wifi:Init dynamic rx buffer num: 32
+I (3816) wifi_init: rx ba win: 6
+I (3816) wifi_init: accept mbox: 6
+I (3816) wifi_init: tcpip mbox: 32
+I (3826) wifi_init: udp mbox: 6
+I (3826) wifi_init: tcp mbox: 6
+I (3826) wifi_init: tcp tx win: 5760
+I (3826) wifi_init: tcp rx win: 5760
+I (3826) wifi_init: tcp mss: 1440
+I (3826) base_reported: ESP_BASE_REPORTED schema=1 boot_id=<redacted> uptime_ms=1157 free_heap=147312 min_free_heap=49340 device_id=<redacted> firmware=0.2.0 chip=ESP32 flash=4194304 config_generation=0 reset=power_on provisioned=false wifi_state=unconfigured time_ready=false mqtt_state=unconfigured frp_state=unconfigured frp_attempts=0 frp_sessions=0 frp_pongs=0 frp_active=0 frp_error=0 ota_received=0 ota_total=0
+I (3826) esp_base: ESP_BASE_READY hardware_outputs=untouched provisioning=required
+I (3826) five-capacity-auth: heap phase=after_base_ready free=147096 largest=110592 min=49340
+I (3826) five-capacity-auth: heap phase=before_guest free=138728 largest=110592 min=49340
+I (3826) five-capacity-auth: heap phase=guest_opened free=61160 largest=43008 min=49340
+I (3826) five-capacity-auth: heap phase=guest_event_done free=61160 largest=43008 min=49340
+I (3846) five-capacity-auth: frp_record run=2 label=ready_4k_first plain=4096 init=0 feed=0 consumed=4128 records=1 compare=4096 auth=1 expected=1 alloc=1 released=1 alloc_fail=0 peak=4096 live=0 before=61160/43008 during=57060/43008 after=61160/43008
+I (3846) five-capacity-auth: frp_record run=2 label=ready_4k_repeat plain=4096 init=0 feed=0 consumed=4128 records=1 compare=4096 auth=1 expected=1 alloc=1 released=1 alloc_fail=0 peak=4096 live=0 before=61160/43008 during=57060/43008 after=61160/43008
+I (3846) five-capacity-auth: frp_record run=2 label=ready_4k_bad_tag plain=4096 init=0 feed=-11 consumed=4128 records=0 compare=0 auth=0 expected=1 alloc=1 released=1 alloc_fail=0 peak=4096 live=0 before=61160/43008 during=61160/43008 after=61160/43008
+I (3856) five-capacity-auth: frp_record run=2 label=ready_max plain=65536 init=0 feed=-20 consumed=53264 records=0 compare=0 auth=0 expected=1 alloc=13 released=13 alloc_fail=1 peak=53248 live=0 before=61160/43008 during=61160/43008 after=61160/43008
+I (3856) frp-iram-aead: start 8bit=61160/43008 exec32=132224/73728
+I (3856) frp-iram-aead: alloc index=1 size=4096 pointer=0x4008de08 pure_iram=1 byte_accessible=0 free8=61160/43008 exec32=128124/69632
+I (3856) frp-iram-aead: record label=4k plain=4096 feed=0 fed=4128 records=1 compared=4096 alloc=1 release=1 reject=0 wipe_errors=0 region_errors=0 heap8_before=61160/43008 heap8_min_alloc=61160 heap8_after_feed=61160 heap8_after=61160 exec_before=132224 exec_after_feed=128124 exec_after=132224 pass=1
+I (3856) frp-iram-aead: alloc index=1 size=4096 pointer=0x4008de08 pure_iram=1 byte_accessible=0 free8=61160/43008 exec32=128124/69632
+I (3856) frp-iram-aead: record label=4k_bad_tag plain=4096 feed=-11 fed=4128 records=0 compared=0 alloc=1 release=1 reject=0 wipe_errors=0 region_errors=0 heap8_before=61160/43008 heap8_min_alloc=61160 heap8_after_feed=61160 heap8_after=61160 exec_before=132224 exec_after_feed=132224 exec_after=132224 pass=1
+I (3856) frp-iram-aead: alloc index=1 size=4096 pointer=0x4008de08 pure_iram=1 byte_accessible=0 free8=61160/43008 exec32=128124/69632
+I (3856) frp-iram-aead: alloc index=2 size=4096 pointer=0x4008ee0c pure_iram=1 byte_accessible=0 free8=61160/43008 exec32=124024/65536
+I (3856) frp-iram-aead: alloc index=3 size=4096 pointer=0x4008fe10 pure_iram=1 byte_accessible=0 free8=61160/43008 exec32=119924/61440
+I (3856) frp-iram-aead: alloc index=4 size=4096 pointer=0x40090e14 pure_iram=1 byte_accessible=0 free8=61160/43008 exec32=115824/57344
+I (3856) frp-iram-aead: alloc index=5 size=4096 pointer=0x40091e18 pure_iram=1 byte_accessible=0 free8=61160/43008 exec32=111724/53248
+I (3856) frp-iram-aead: alloc index=6 size=4096 pointer=0x40092e1c pure_iram=1 byte_accessible=0 free8=61160/43008 exec32=107624/49152
+I (3856) frp-iram-aead: alloc index=7 size=4096 pointer=0x40093e20 pure_iram=1 byte_accessible=0 free8=61160/43008 exec32=103524/45056
+I (3856) frp-iram-aead: alloc index=8 size=4096 pointer=0x40094e24 pure_iram=1 byte_accessible=0 free8=61160/43008 exec32=99424/43008
+I (3856) frp-iram-aead: alloc index=9 size=4096 pointer=0x40095e28 pure_iram=1 byte_accessible=0 free8=61160/43008 exec32=95324/43008
+I (3856) frp-iram-aead: alloc index=10 size=4096 pointer=0x40096e2c pure_iram=1 byte_accessible=0 free8=61160/43008 exec32=91224/43008
+I (3856) frp-iram-aead: alloc index=11 size=4096 pointer=0x40097e30 pure_iram=1 byte_accessible=0 free8=61160/43008 exec32=87124/43008
+I (3856) frp-iram-aead: alloc index=12 size=4096 pointer=0x40098e34 pure_iram=1 byte_accessible=0 free8=61160/43008 exec32=83024/43008
+I (3856) frp-iram-aead: alloc index=13 size=4096 pointer=0x40099e38 pure_iram=1 byte_accessible=0 free8=61160/43008 exec32=78924/43008
+I (3856) frp-iram-aead: alloc index=14 size=4096 pointer=0x4009ae3c pure_iram=1 byte_accessible=0 free8=61160/43008 exec32=74824/43008
+I (3856) frp-iram-aead: alloc index=15 size=4096 pointer=0x4009be40 pure_iram=1 byte_accessible=0 free8=61160/43008 exec32=70724/43008
+I (3856) frp-iram-aead: alloc index=16 size=4096 pointer=0x4009ce44 pure_iram=1 byte_accessible=0 free8=61160/43008 exec32=66624/43008
+I (3856) frp-iram-aead: record label=64k plain=65536 feed=0 fed=65568 records=1 compared=65536 alloc=16 release=16 reject=0 wipe_errors=0 region_errors=0 heap8_before=61160/43008 heap8_min_alloc=61160 heap8_after_feed=61160 heap8_after=61160 exec_before=132224 exec_after_feed=66624 exec_after=132224 pass=1
+I (3856) frp-iram-aead: alloc index=1 size=4096 pointer=0x4008de08 pure_iram=1 byte_accessible=0 free8=61160/43008 exec32=128124/69632
+I (3856) frp-iram-aead: alloc index=2 size=4096 pointer=0x4008ee0c pure_iram=1 byte_accessible=0 free8=61160/43008 exec32=124024/65536
+I (3856) frp-iram-aead: alloc index=3 size=4096 pointer=0x4008fe10 pure_iram=1 byte_accessible=0 free8=61160/43008 exec32=119924/61440
+I (3856) frp-iram-aead: alloc index=4 size=4096 pointer=0x40090e14 pure_iram=1 byte_accessible=0 free8=61160/43008 exec32=115824/57344
+I (3856) frp-iram-aead: alloc index=5 size=4096 pointer=0x40091e18 pure_iram=1 byte_accessible=0 free8=61160/43008 exec32=111724/53248
+I (3856) frp-iram-aead: alloc index=6 size=4096 pointer=0x40092e1c pure_iram=1 byte_accessible=0 free8=61160/43008 exec32=107624/49152
+I (3856) frp-iram-aead: alloc index=7 size=4096 pointer=0x40093e20 pure_iram=1 byte_accessible=0 free8=61160/43008 exec32=103524/45056
+I (3856) frp-iram-aead: alloc index=8 size=4096 pointer=0x40094e24 pure_iram=1 byte_accessible=0 free8=61160/43008 exec32=99424/43008
+I (3856) frp-iram-aead: alloc index=9 size=4096 pointer=0x40095e28 pure_iram=1 byte_accessible=0 free8=61160/43008 exec32=95324/43008
+I (3856) frp-iram-aead: alloc index=10 size=4096 pointer=0x40096e2c pure_iram=1 byte_accessible=0 free8=61160/43008 exec32=91224/43008
+I (3856) frp-iram-aead: alloc index=11 size=4096 pointer=0x40097e30 pure_iram=1 byte_accessible=0 free8=61160/43008 exec32=87124/43008
+I (3856) frp-iram-aead: alloc index=12 size=4096 pointer=0x40098e34 pure_iram=1 byte_accessible=0 free8=61160/43008 exec32=83024/43008
+I (3856) frp-iram-aead: alloc index=13 size=4096 pointer=0x40099e38 pure_iram=1 byte_accessible=0 free8=61160/43008 exec32=78924/43008
+I (3856) frp-iram-aead: alloc index=14 size=4096 pointer=0x4009ae3c pure_iram=1 byte_accessible=0 free8=61160/43008 exec32=74824/43008
+I (3856) frp-iram-aead: alloc index=15 size=4096 pointer=0x4009be40 pure_iram=1 byte_accessible=0 free8=61160/43008 exec32=70724/43008
+I (3856) frp-iram-aead: alloc index=16 size=4096 pointer=0x4009ce44 pure_iram=1 byte_accessible=0 free8=61160/43008 exec32=66624/43008
+I (3856) frp-iram-aead: record label=64k_bad_tag plain=65536 feed=-11 fed=65568 records=0 compared=0 alloc=16 release=16 reject=0 wipe_errors=0 region_errors=0 heap8_before=61160/43008 heap8_min_alloc=61160 heap8_after_feed=61160 heap8_after=61160 exec_before=132224 exec_after_feed=132224 exec_after=132224 pass=1
+I (3856) frp-iram-aead: summary failures=0
+I (3856) five-capacity-openeth: openeth phase=before error=0 got_ip=0 free=61160 largest=43008 min=4696 alloc_fail=0 last_size=0 last_caps=0
+I (3856) five-capacity-openeth: openeth phase=created_mac_phy error=0 got_ip=0 free=48332 largest=43008 min=4556 alloc_fail=0 last_size=0 last_caps=0
+I (3976) five-capacity-openeth: openeth phase=driver_install error=0 got_ip=0 free=48204 largest=43008 min=4556 alloc_fail=0 last_size=0 last_caps=0
+I (3976) esp_eth.netif.netif_glue: 52:54:00:12:34:56
+I (3976) esp_eth.netif.netif_glue: ethernet attached to netif
+I (3976) five-capacity-openeth: openeth phase=netif_attach error=0 got_ip=0 free=47440 largest=43008 min=4556 alloc_fail=0 last_size=0 last_caps=0
+I (3976) five-capacity-openeth: openeth phase=register_ip error=0 got_ip=0 free=47408 largest=43008 min=4556 alloc_fail=0 last_size=0 last_caps=0
+I (4126) five-capacity-openeth: openeth phase=eth_start error=0 got_ip=0 free=47388 largest=43008 min=4556 alloc_fail=0 last_size=0 last_caps=0
+E (4126) esp_eth: esp_eth_ioctl(533): add mac address to filter not supported
+E (4126) esp_eth.netif.netif_glue: eth_set_mac_filter(56): failed to add mac filter
+E (4126) esp_netif_lwip: Failed to add multicast filter for IPv4
+I (5186) esp_netif_handlers: eth ip: 10.0.2.15, mask: 255.255.255.0, gw: 10.0.2.2
+I (5226) five-capacity-openeth: openeth phase=dhcp_result error=0 got_ip=1 free=47064 largest=43008 min=2996 alloc_fail=0 last_size=0 last_caps=0
+I (6896) five-capacity-frps: base_sntp_ready=1 unix_time=1790452088
+I (6896) five-capacity-frps: frps phase=before_create api=0 client_phase=-1 failure_phase=-1 error=-1 attempts=0 ready=0 pongs=0 tls_error=0 verify=0 system_error=0 free=46952 largest=43008 min=2996
+I (6896) five-capacity-openeth: openeth phase=before_create error=0 got_ip=1 free=46952 largest=43008 min=2996 alloc_fail=0 last_size=0 last_caps=0
+I (6906) five-capacity-frps: frps phase=created api=0 client_phase=0 failure_phase=0 error=0 attempts=0 ready=0 pongs=0 tls_error=0 verify=4294967295 system_error=0 free=36504 largest=32768 min=2996
+I (6906) five-capacity-openeth: openeth phase=created error=0 got_ip=1 free=36504 largest=32768 min=2996 alloc_fail=0 last_size=0 last_caps=0
+I (6906) five-capacity-frps: frps phase=start_queued api=0 client_phase=0 failure_phase=0 error=0 attempts=0 ready=0 pongs=0 tls_error=0 verify=4294967295 system_error=0 free=36504 largest=32768 min=2996
+I (6906) five-capacity-openeth: openeth phase=start_queued error=0 got_ip=1 free=36504 largest=32768 min=2996 alloc_fail=0 last_size=0 last_caps=0
+I (6956) five-capacity-frps: frps phase=phase_changed api=0 client_phase=1 failure_phase=0 error=0 attempts=1 ready=0 pongs=0 tls_error=0 verify=4294967295 system_error=0 free=35764 largest=32768 min=2424
+I (6956) five-capacity-openeth: openeth phase=phase_changed error=0 got_ip=1 free=35880 largest=32768 min=2424 alloc_fail=0 last_size=0 last_caps=0
+I (6996) five-capacity-frps: frps phase=phase_changed api=0 client_phase=2 failure_phase=0 error=0 attempts=1 ready=0 pongs=0 tls_error=0 verify=4294967295 system_error=0 free=7904 largest=6912 min=2424
+I (6996) five-capacity-openeth: openeth phase=phase_changed error=0 got_ip=1 free=7904 largest=6912 min=2424 alloc_fail=0 last_size=0 last_caps=0
+I (8396) five-capacity-frps: frps phase=phase_changed api=0 client_phase=6 failure_phase=2 error=-20 attempts=1 ready=0 pongs=0 tls_error=0 verify=0 system_error=0 free=33364 largest=30720 min=936
+I (8396) five-capacity-openeth: openeth phase=phase_changed error=0 got_ip=1 free=35988 largest=32768 min=936 alloc_fail=1 last_size=18872 last_caps=6144
+I (8416) five-capacity-frps: frps phase=phase_changed api=0 client_phase=8 failure_phase=2 error=-20 attempts=1 ready=0 pongs=0 tls_error=0 verify=0 system_error=0 free=35988 largest=32768 min=936
+I (8416) five-capacity-openeth: openeth phase=phase_changed error=0 got_ip=1 free=35988 largest=32768 min=936 alloc_fail=1 last_size=18872 last_caps=6144
+I (8416) five-capacity-frps: frps phase=result api=0 client_phase=8 failure_phase=2 error=-20 attempts=1 ready=0 pongs=0 tls_error=0 verify=0 system_error=0 free=35988 largest=32768 min=936
+I (8416) five-capacity-openeth: openeth phase=result error=0 got_ip=1 free=35988 largest=32768 min=936 alloc_fail=1 last_size=18872 last_caps=6144
+I (8426) five-capacity-frps: frps phase=destroy api=0 client_phase=-1 failure_phase=-1 error=-1 attempts=0 ready=0 pongs=0 tls_error=0 verify=0 system_error=0 free=46568 largest=43008 min=936
+I (8426) five-capacity-openeth: openeth phase=destroy error=0 got_ip=1 free=46568 largest=43008 min=936 alloc_fail=1 last_size=18872 last_caps=6144
+E (8426) esp_eth: esp_eth_ioctl(539): remove mac address from filter not supported
+E (8426) esp_eth.netif.netif_glue: eth_set_mac_filter(58): failed to delete mac filter
+E (8426) esp_netif_lwip: Failed to remove multicast filter for IPv4
+I (8426) five-capacity-openeth: openeth phase=after_cleanup error=0 got_ip=1 free=60500 largest=43008 min=936 alloc_fail=1 last_size=18872 last_caps=6144
+I (8426) five-capacity-auth: heap phase=guest_closed free=138104 largest=110592 min=936
+I (8426) five-capacity-auth: result run=2 open=0 init=0 event=0 stop=0 close=0 guest=3 failures=1
+I (8426) five-capacity-auth: probe_summary runs=2 failures=1
+I (8426) five-capacity-auth: heap phase=after_base_guest_closed free=146472 largest=110592 min=936
+I (8426) main_task: Returned from app_main()
+I (8846) base_reported: ESP_BASE_REPORTED schema=1 boot_id=<redacted> uptime_ms=6167 free_heap=150832 min_free_heap=936 device_id=<redacted> firmware=0.2.0 chip=ESP32 flash=4194304 config_generation=0 reset=power_on provisioned=false wifi_state=unconfigured time_ready=true mqtt_state=unconfigured frp_state=unconfigured frp_attempts=0 frp_sessions=0 frp_pongs=0 frp_active=0 frp_error=0 ota_received=0 ota_total=0
+I (13856) base_reported: ESP_BASE_REPORTED schema=1 boot_id=<redacted> uptime_ms=11180 free_heap=150824 min_free_heap=936 device_id=<redacted> firmware=0.2.0 chip=ESP32 flash=4194304 config_generation=0 reset=power_on provisioned=false wifi_state=unconfigured time_ready=true mqtt_state=unconfigured frp_state=unconfigured frp_attempts=0 frp_sessions=0 frp_pongs=0 frp_active=0 frp_error=0 ota_received=0 ota_total=0
+I (18866) base_reported: ESP_BASE_REPORTED schema=1 boot_id=<redacted> uptime_ms=16194 free_heap=150832 min_free_heap=936 device_id=<redacted> firmware=0.2.0 chip=ESP32 flash=4194304 config_generation=0 reset=power_on provisioned=false wifi_state=unconfigured time_ready=true mqtt_state=unconfigured frp_state=unconfigured frp_attempts=0 frp_sessions=0 frp_pongs=0 frp_active=0 frp_error=0 ota_received=0 ota_total=0
+I (23896) base_reported: ESP_BASE_REPORTED schema=1 boot_id=<redacted> uptime_ms=21223 free_heap=150832 min_free_heap=936 device_id=<redacted> firmware=0.2.0 chip=ESP32 flash=4194304 config_generation=0 reset=power_on provisioned=false wifi_state=unconfigured time_ready=true mqtt_state=unconfigured frp_state=unconfigured frp_attempts=0 frp_sessions=0 frp_pongs=0 frp_active=0 frp_error=0 ota_received=0 ota_total=0
+I (28906) base_reported: ESP_BASE_REPORTED schema=1 boot_id=<redacted> uptime_ms=26232 free_heap=150832 min_free_heap=936 device_id=<redacted> firmware=0.2.0 chip=ESP32 flash=4194304 config_generation=0 reset=power_on provisioned=false wifi_state=unconfigured time_ready=true mqtt_state=unconfigured frp_state=unconfigured frp_attempts=0 frp_sessions=0 frp_pongs=0 frp_active=0 frp_error=0 ota_received=0 ota_total=0
+I (33926) base_reported: ESP_BASE_REPORTED schema=1 boot_id=<redacted> uptime_ms=31250 free_heap=150832 min_free_heap=936 device_id=<redacted> firmware=0.2.0 chip=ESP32 flash=4194304 config_generation=0 reset=power_on provisioned=false wifi_state=unconfigured time_ready=true mqtt_state=unconfigured frp_state=unconfigured frp_attempts=0 frp_sessions=0 frp_pongs=0 frp_active=0 frp_error=0 ota_received=0 ota_total=0
+I (38926) base_reported: ESP_BASE_REPORTED schema=1 boot_id=<redacted> uptime_ms=36254 free_heap=150832 min_free_heap=936 device_id=<redacted> firmware=0.2.0 chip=ESP32 flash=4194304 config_generation=0 reset=power_on provisioned=false wifi_state=unconfigured time_ready=true mqtt_state=unconfigured frp_state=unconfigured frp_attempts=0 frp_sessions=0 frp_pongs=0 frp_active=0 frp_error=0 ota_received=0 ota_total=0
+I (43976) base_reported: ESP_BASE_REPORTED schema=1 boot_id=<redacted> uptime_ms=41305 free_heap=150832 min_free_heap=936 device_id=<redacted> firmware=0.2.0 chip=ESP32 flash=4194304 config_generation=0 reset=power_on provisioned=false wifi_state=unconfigured time_ready=true mqtt_state=unconfigured frp_state=unconfigured frp_attempts=0 frp_sessions=0 frp_pongs=0 frp_active=0 frp_error=0 ota_received=0 ota_total=0
+I (49016) base_reported: ESP_BASE_REPORTED schema=1 boot_id=<redacted> uptime_ms=46344 free_heap=150832 min_free_heap=936 device_id=<redacted> firmware=0.2.0 chip=ESP32 flash=4194304 config_generation=0 reset=power_on provisioned=false wifi_state=unconfigured time_ready=true mqtt_state=unconfigured frp_state=unconfigured frp_attempts=0 frp_sessions=0 frp_pongs=0 frp_active=0 frp_error=0 ota_received=0 ota_total=0
+I (54066) base_reported: ESP_BASE_REPORTED schema=1 boot_id=<redacted> uptime_ms=51388 free_heap=150832 min_free_heap=936 device_id=<redacted> firmware=0.2.0 chip=ESP32 flash=4194304 config_generation=0 reset=power_on provisioned=false wifi_state=unconfigured time_ready=true mqtt_state=unconfigured frp_state=unconfigured frp_attempts=0 frp_sessions=0 frp_pongs=0 frp_active=0 frp_error=0 ota_received=0 ota_total=0
+I (59086) base_reported: ESP_BASE_REPORTED schema=1 boot_id=<redacted> uptime_ms=56412 free_heap=150832 min_free_heap=936 device_id=<redacted> firmware=0.2.0 chip=ESP32 flash=4194304 config_generation=0 reset=power_on provisioned=false wifi_state=unconfigured time_ready=true mqtt_state=unconfigured frp_state=unconfigured frp_attempts=0 frp_sessions=0 frp_pongs=0 frp_active=0 frp_error=0 ota_received=0 ota_total=0
+I (64106) base_reported: ESP_BASE_REPORTED schema=1 boot_id=<redacted> uptime_ms=61429 free_heap=150832 min_free_heap=936 device_id=<redacted> firmware=0.2.0 chip=ESP32 flash=4194304 config_generation=0 reset=power_on provisioned=false wifi_state=unconfigured time_ready=true mqtt_state=unconfigured frp_state=unconfigured frp_attempts=0 frp_sessions=0 frp_pongs=0 frp_active=0 frp_error=0 ota_received=0 ota_total=0
+I (69126) base_reported: ESP_BASE_REPORTED schema=1 boot_id=<redacted> uptime_ms=66451 free_heap=150832 min_free_heap=936 device_id=<redacted> firmware=0.2.0 chip=ESP32 flash=4194304 config_generation=0 reset=power_on provisioned=false wifi_state=unconfigured time_ready=true mqtt_state=unconfigured frp_state=unconfigured frp_attempts=0 frp_sessions=0 frp_pongs=0 frp_active=0 frp_error=0 ota_received=0 ota_total=0
+I (74126) base_reported: ESP_BASE_REPORTED schema=1 boot_id=<redacted> uptime_ms=71453 free_heap=150832 min_free_heap=936 device_id=<redacted> firmware=0.2.0 chip=ESP32 flash=4194304 config_generation=0 reset=power_on provisioned=false wifi_state=unconfigured time_ready=true mqtt_state=unconfigured frp_state=unconfigured frp_attempts=0 frp_sessions=0 frp_pongs=0 frp_active=0 frp_error=0 ota_received=0 ota_total=0
+I (79176) base_reported: ESP_BASE_REPORTED schema=1 boot_id=<redacted> uptime_ms=76505 free_heap=150832 min_free_heap=936 device_id=<redacted> firmware=0.2.0 chip=ESP32 flash=4194304 config_generation=0 reset=power_on provisioned=false wifi_state=unconfigured time_ready=true mqtt_state=unconfigured frp_state=unconfigured frp_attempts=0 frp_sessions=0 frp_pongs=0 frp_active=0 frp_error=0 ota_received=0 ota_total=0
+I (84196) base_reported: ESP_BASE_REPORTED schema=1 boot_id=<redacted> uptime_ms=81520 free_heap=150832 min_free_heap=936 device_id=<redacted> firmware=0.2.0 chip=ESP32 flash=4194304 config_generation=0 reset=power_on provisioned=false wifi_state=unconfigured time_ready=true mqtt_state=unconfigured frp_state=unconfigured frp_attempts=0 frp_sessions=0 frp_pongs=0 frp_active=0 frp_error=0 ota_received=0 ota_total=0
+I (89236) base_reported: ESP_BASE_REPORTED schema=1 boot_id=<redacted> uptime_ms=86558 free_heap=150832 min_free_heap=936 device_id=<redacted> firmware=0.2.0 chip=ESP32 flash=4194304 config_generation=0 reset=power_on provisioned=false wifi_state=unconfigured time_ready=true mqtt_state=unconfigured frp_state=unconfigured frp_attempts=0 frp_sessions=0 frp_pongs=0 frp_active=0 frp_error=0 ota_received=0 ota_total=0
+qemu-system-xtensa: terminating on signal 15 from pid 27850 (<unknown process>)
