@@ -222,7 +222,8 @@ int main(int argc, char **argv)
     const econtainer_slots_result_t result = econtainer_slots_write_and_prepare(
         &io, &geometry, state.sequence, source_read, (void *)&source,
         econtainer_package_slot_validate, &validation, &state);
-    if (strcmp(argv[3], "valid") == 0 || strcmp(argv[3], "changed-copy") == 0) {
+    if (strcmp(argv[3], "valid") == 0 || strcmp(argv[3], "reuse") == 0 ||
+        strcmp(argv[3], "changed-copy") == 0) {
         assert(result == ECONTAINER_SLOTS_OK);
         assert(state.phase == ECONTAINER_SLOT_PREPARED);
         assert(verified_info.data_schema_version == 1);
@@ -235,6 +236,48 @@ int main(int argc, char **argv)
                       "counter", verified_info.product_id_size_bytes) == 0);
         assert(memcmp(package_workspace.manifest + verified_info.product_version_offset_bytes,
                       "v0-1-0", verified_info.product_version_size_bytes) == 0);
+        if (strcmp(argv[3], "reuse") == 0) {
+            uint8_t boot_id[ECONTAINER_SLOT_BOOT_ID_BYTES] = {1};
+            assert(econtainer_slots_begin_trial(&io, &geometry, state.sequence,
+                firmware_set.running_firmware_sha256, boot_id, &state) == ECONTAINER_SLOTS_OK);
+            assert(econtainer_slots_mark_healthy(&io, &geometry, state.sequence,
+                boot_id, &state) == ECONTAINER_SLOTS_OK);
+            assert(econtainer_slots_confirm(&io, &geometry, state.sequence,
+                firmware_set.running_firmware_sha256, boot_id, &state) == ECONTAINER_SLOTS_OK);
+            econtainer_slot_firmware_set_t prepared = firmware_set;
+            prepared.bootable_count = 2;
+            memset(prepared.bootable_firmware_sha256[1], 0x22, 32);
+            econtainer_slot_operation_t reused = {0};
+            reused.kind = ECONTAINER_SLOT_PACKAGE_REUSE;
+            reused.operation_id[0] = 2;
+            memset(reused.target_firmware_sha256, 0x22, 32);
+            reused.slot = state.bindings[0].slot;
+            memcpy(reused.package_sha256, state.bindings[0].package_sha256, 32);
+            reused.package_size_bytes = state.bindings[0].package_size_bytes;
+            reused.guest_abi_version = state.bindings[0].guest_abi_version;
+            reused.data_schema_version = state.bindings[0].data_schema_version;
+            uint8_t package_before[SLOT_BYTES];
+            memcpy(package_before, store->flash, sizeof(package_before));
+            validation.expected_product_id = "other";
+            assert(econtainer_slots_stage_firmware(&io, &geometry, state.sequence,
+                &prepared, &reused, econtainer_package_slot_validate_binding,
+                &validation, &state) == ECONTAINER_SLOTS_UNTRUSTED);
+            validation.expected_product_id = "counter";
+            assert(econtainer_slots_stage_firmware(&io, &geometry, state.sequence,
+                &prepared, &reused, econtainer_package_slot_validate_binding,
+                &validation, &state) == ECONTAINER_SLOTS_OK);
+            assert(state.phase == ECONTAINER_SLOT_PREPARED &&
+                state.bindings[1].present && !state.bindings[1].package_present &&
+                memcmp(package_before, store->flash, sizeof(package_before)) == 0);
+            assert(econtainer_slots_begin_trial(&io, &geometry, state.sequence,
+                prepared.bootable_firmware_sha256[1], boot_id, &state) == ECONTAINER_SLOTS_OK);
+            assert(econtainer_slots_mark_healthy(&io, &geometry, state.sequence,
+                boot_id, &state) == ECONTAINER_SLOTS_OK);
+            assert(econtainer_slots_confirm(&io, &geometry, state.sequence,
+                prepared.bootable_firmware_sha256[1], boot_id, &state) == ECONTAINER_SLOTS_OK);
+            assert(state.bindings[1].package_present && state.bindings[1].slot == 0 &&
+                memcmp(package_before, store->flash, sizeof(package_before)) == 0);
+        }
     } else {
         if (strcmp(argv[3], "read-fault") == 0 ||
             strcmp(argv[3], "wasm-read-fault") == 0) {

@@ -31,13 +31,15 @@ def main() -> None:
             serialization.Encoding.DER, serialization.PublicFormat.PKCS1))
         package = temporary / "product.pkg"
         package.write_bytes(signed_package(private, module(), spec))
-        for mode in ("valid", "changed-copy", "product", "schema", "key-id", "memory", "queue",
+        for mode in ("valid", "reuse", "changed-copy", "product", "schema", "key-id", "memory", "queue",
                      "budget", "timeout", "read-fault", "wasm-read-fault"):
             result = subprocess.run([str(binary), str(package), str(public), mode],
                                     capture_output=True, text=True, check=False)
             assert result.returncode == 0, f"{mode}: {result.stdout} {result.stderr}"
             if mode in ("valid", "changed-copy"):
                 expected = "result=0 phase=2"
+            elif mode == "reuse":
+                expected = "result=0 phase=5"
             elif mode in ("read-fault", "wasm-read-fault"):
                 expected = "result=3 phase=1"
             else:

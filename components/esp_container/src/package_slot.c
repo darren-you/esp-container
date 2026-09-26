@@ -119,3 +119,20 @@ econtainer_slot_validation_result_t econtainer_package_slot_validate(
     return econtainer_package_slot_check(context, operation != NULL ? &package : NULL,
                                           read_fn, read_context, package_size_bytes);
 }
+
+econtainer_slot_validation_result_t econtainer_package_slot_validate_binding(
+    void *context, const econtainer_slot_binding_t *binding,
+    econtainer_slot_read_fn read_fn, void *read_context, size_t package_size_bytes)
+{
+    econtainer_slot_package_t package = {0};
+    if (binding == NULL || !binding->present || !binding->package_present) {
+        return ECONTAINER_SLOT_VALIDATION_UNTRUSTED;
+    }
+    package.slot = binding->slot;
+    memcpy(package.package_sha256, binding->package_sha256, sizeof(package.package_sha256));
+    package.package_size_bytes = binding->package_size_bytes;
+    package.guest_abi_version = binding->guest_abi_version;
+    package.data_schema_version = binding->data_schema_version;
+    return econtainer_package_slot_check(context, &package,
+                                          read_fn, read_context, package_size_bytes);
+}

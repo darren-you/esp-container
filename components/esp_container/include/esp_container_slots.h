@@ -68,11 +68,19 @@ typedef struct {
     uint32_t data_schema_version;
 } econtainer_slot_binding_t;
 
+typedef enum {
+    ECONTAINER_SLOT_PACKAGE_WRITE = 0,
+    ECONTAINER_SLOT_PACKAGE_REUSE,
+    ECONTAINER_SLOT_NO_PACKAGE,
+} econtainer_slot_operation_kind_t;
+
 typedef struct {
     uint8_t operation_id[ECONTAINER_SLOT_OPERATION_ID_BYTES];
     uint8_t target_firmware_sha256[32];
     uint8_t package_sha256[32];
     uint8_t slot;
+    econtainer_slot_operation_kind_t kind;
+    bool firmware_transition;
     uint32_t package_size_bytes;
     uint32_t guest_abi_version;
     uint32_t data_schema_version;
@@ -143,6 +151,12 @@ typedef econtainer_slot_validation_result_t (*econtainer_slot_validate_fn)(
     void *context, const econtainer_slot_operation_t *operation,
     econtainer_slot_read_fn read_fn, void *read_context, size_t package_size_bytes);
 
+/* For a firmware transition that reuses an already confirmed package. The
+ * platform supplies the proposed firmware's independent product/grant policy. */
+typedef econtainer_slot_validation_result_t (*econtainer_slot_validate_binding_fn)(
+    void *context, const econtainer_slot_binding_t *binding,
+    econtainer_slot_read_fn read_fn, void *read_context, size_t package_size_bytes);
+
 /* The unique executor owner checks that this trial has stopped and has no native references. */
 typedef bool (*econtainer_slot_trial_stopped_fn)(
     void *context, const uint8_t operation_id[ECONTAINER_SLOT_OPERATION_ID_BYTES]);
@@ -152,6 +166,7 @@ typedef enum {
     ECONTAINER_SLOT_BOOT_CONFIRMED,
     ECONTAINER_SLOT_BOOT_RECOVER_CONFIRMED,
     ECONTAINER_SLOT_BOOT_RECOVER_CONFIRMED_CANDIDATE_INVALID,
+    ECONTAINER_SLOT_BOOT_START_TRIAL,
 } econtainer_slot_boot_decision_t;
 
 bool econtainer_slots_geometry_valid(const econtainer_slots_geometry_t *geometry);
@@ -164,6 +179,34 @@ econtainer_slots_result_t econtainer_slots_initialize(
 
 econtainer_slots_result_t econtainer_slots_load(
     const econtainer_slots_io_t *io, const econtainer_slots_geometry_t *geometry,
+    econtainer_slots_state_t *state);
+
+/* Base owns app/otadata and has fully verified the signed inactive image.
+ * While holding that owner, replace the inactive firmware identity and commit
+ * one pending operation in the same NVS blob before selecting boot. WRITE
+ * reserves a protected, unreferenced package slot before any erase; REUSE
+ * validates the running firmware's confirmed package for the new firmware and
+ * stores PREPARED without copying it; NO_PACKAGE stores explicit PREPARED with
+ * no guest. Running firmware and its confirmed package remain unchanged.
+ * The candidate is never a confirmed package until confirm succeeds after
+ * firmware VALID. On uncertain commit, read the persisted state before any
+ * retry or Flash/otadata write. The transition flag is set by this API; the
+ * caller supplies it as false. */
+econtainer_slots_result_t econtainer_slots_stage_firmware(
+    const econtainer_slots_io_t *io, const econtainer_slots_geometry_t *geometry,
+    uint32_t expected_sequence,
+    const econtainer_slot_firmware_set_t *prepared_set,
+    const econtainer_slot_operation_t *operation,
+    econtainer_slot_validate_binding_fn validate_fn, void *validate_context,
+    econtainer_slots_state_t *state);
+
+/* After explicit abandonment and Base proof that the failed target is no
+ * longer bootable, remove that inactive pending binding. Never erase a package
+ * here. The only remaining binding must exactly match actual_set. */
+econtainer_slots_result_t econtainer_slots_drop_aborted_firmware(
+    const econtainer_slots_io_t *io, const econtainer_slots_geometry_t *geometry,
+    uint32_t expected_sequence,
+    const econtainer_slot_firmware_set_t *actual_set,
     econtainer_slots_state_t *state);
 
 /*
