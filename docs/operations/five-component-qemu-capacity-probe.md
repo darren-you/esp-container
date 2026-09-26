@@ -200,3 +200,79 @@ python3 /private/tmp/esp-p6-frp-chunked-20260926/run_qemu.py /private/tmp/esp-p6
 ```
 
 上述 `0x121000` 镜像带仓外容量探针、固定 guest 字节、ADC2 QEMU 空桩、UART0 控制台和测试签名键，FRP/MQTT/OTA 的业务能力仍主要通过 map 深链接，未运行真实网络负载。此轮没有逐符号 map 差分去除探针与空桩，因此**不能把 `0x121000` 当作生产五组件固件大小**，也不能据此更新上一节的 Flash 产品布局结论。QEMU 空桩镜像不可刷实板；本轮没有设备写入、真实 Wi-Fi/FRPS/Broker/OTA 会话、完整密文记录解密或包槽迁移。
+
+## 2026-09-26：本地五候选精确源码同镜像复测
+
+本次不沿用上一节旧 Base/MQTT/OTA 组件源码，而是在 mac-work-1 的独立 `/private/tmp/esp-p6-exact-c3-20260926` 用五个本地完整提交重新组装：Base `6976bc43be5c4ec6321abdae53a22e89d7d742ea`、FRP `533e29467b24d01157ff3b5229e62c93d101be61`、MQTT `9d6d95e779f4f5ff387a6d9b54015bf4e43565f2`、OTA `5da4a0dfbbe97723286e1a9b050e7029cff6e718`、Container `8eb805f3f12cb3cd836e9833acb4aca878ae80e7`。ESP-IDF、lwIP、WAMR 仍分别固定 `578cf89c343e388db43ba1f4ddcd602fedcb763c`、`2758df4cd3666b3b2a5b53830148379326425c0d`、`26c235e53e29acd8b43abe7f3b524577bd4d1ae5`。完整[源码锁](five-component-exact-source-lock.txt) SHA-256 `dd3423b297d093667892c0b2684f131612b9e49de802f10ea8653033509a5b58`，[24 项探针输入摘要](five-component-exact-probe-inputs.sha256)自身 SHA-256 `63cfb8668440ca926ccf4eddf399692a259e8ab21fe4418e2c3d72793600b99d`。`diff -qr` 核对仓外四个本地组件与各自提交归档的组件源码相等。
+
+**依赖锁边界**：Base `6976bc43` 正式 `idf_component.yml`/`dependencies.lock` 仍指向旧 FRP、MQTT、OTA、Container。仓外实验按[准备脚本](prepare_exact_five_component_qemu.sh)把五仓提交归档直接复制成 IDF 本地组件，并只在该实验副本删去旧远程版本声明，重新生成只含 cJSON/WAMR 的 `dependencies.lock`（SHA-256 `ef846a7917fe1c87f0e3d429c923a5f072310268d49efb8e598b65fa4eae49e4`）。这不是 Base 正式锁升级；五仓精确来源由上面的源码锁与组件字节核对固定。没有添加兼容接口或替换真实组件。实验还复用前节 QEMU 专用 UART0 主控制台、ADC2 校准空桩、RSA 测试键、固定 469 字节 ABI 2 counter guest 和[FRP 记录头探针](frp_chunked_capacity_probe.c)；只在 Base `CMakeLists.txt` 中明确关闭 WAMR shrunk memory。`esp_base_main.c` 相对 Base 提交仅增加探针调用和堆采样，普通产品源未在工作区修改。
+
+固定 SDK 完整链接、`counter_guest.py check`、RSA 第 0 签名块验证均通过。ELF map 实际保留 `efrp_aead_reader_init_chunked`、`efrp_tls_step`、`esp_mqtt_client_start`、`eota_preflight`、`econtainer_runtime_open`、`wasm_interp_call_wasm`。QEMU 日志 SHA-256 `ecb08ff2d798583d2f357683d0d20ee80ea7a0e6b33ec821632b639f0acb6213`；25 秒后由宿主 SIGTERM 结束，无 panic。Base READY 后 guest 的 `open/init/event/stop` 均返回 0，counter 结果为 3；其存活时 free/最大连续块仍为 **66,588/45,056 字节**。此时 reported 为 `provisioned=false`、`wifi_state=unconfigured`、`mqtt_state=unconfigured`、`frp_state=unconfigured`、`frp_sessions=0`。
+
+| Base READY 后 guest 存活时声明的明文长度 | 实际 reader 记录头分配 | 分配期间 free／最大连续块 | 清理后 free／最大连续块 |
+| --- | --- | ---: | ---: |
+| 4 KiB | 1 块成功 | 62,488／45,056 | 66,588／45,056 |
+| 32 KiB | 8 块成功 | 33,788／20,480 | 66,588／45,056 |
+| 48 KiB | 12 块成功 | 17,388／7,680 | 66,588／45,056 |
+| 56 KiB | 14 块成功 | 9,188／3,584 | 66,588／45,056 |
+| 60 KiB | 第 15 块失败，`EFRP_NO_MEMORY=-20` | 回滚后 66,588／45,056 | 66,588／45,056 |
+| 64 KiB | 第 15 块失败，`EFRP_NO_MEMORY=-20` | 回滚后 66,588／45,056 | 66,588／45,056 |
+
+60/64 KiB 失败过程的启动以来低水位为 9,012 字节；已分配的 14 块共 57,344 字节由 reader 的失败路径释放，堆回到进入前。Base 初始化前 guest 存活的 64 KiB 长度头则能成功分配全部 16 块，分配后 free/最大连续块 58,212/45,056，清理后恢复 123,812/59,392。以上只投喂 nonce 与长度头，**没有 FRP session/TLS/FRPS、密文、tag 或已认证明文**；56 KiB 的头分配成功不是网络会话或整条记录成功。当前精确五候选的这个 QEMU 切片，甚至在省略真实会话资源后也不能与 64 KiB guest 同时申请满长 FRP 记录；P6-03 仍未验收。
+
+### 固件与常驻内存尺寸
+
+| 制品或内存段 | 本次读数 |
+| --- | ---: |
+| `idf.py size` 的 Flash `.text` | 864,266 字节 |
+| `idf.py size` 的 Flash `.rodata` | 220,564 字节 |
+| `idf.py size` 的 DRAM 总使用 | 170,830 字节（`.bss` 91,616、`.text` 65,910、`.data` 13,304） |
+| `idf.py size` 的总 image | 1,164,352 字节；不是签名制品长度 |
+| 未签名 `esp_base-unsigned.bin` | `0x120000`，SHA-256 `cc295491037d7bf60c10dd656eaf802338668d0ea8d5bfc15553df86e67266a5` |
+| RSA 测试键签名 `esp_base.bin` | `0x121000`，SHA-256 `8efec6a722d666b86b4098fa9a13059056999ee8b8a14e8c3aa1e66e484d77d0` |
+
+`esptool image-info` 在未签名镜像中读到第 6 段为 `PADDING`：段头 `0x11c580..0x11c588`，填充数据 `0x11c588..0x11ffc8`，长 `0x3a40`（14,912）字节；其后 56 字节 checksum/hash footer 到 `0x120000`。RSA 签名扇区占 `0x120000..0x121000`。若保持此段结构、目标进入前一个 64 KiB 签名台阶 `0x111000`，未签名镜像必须进入 `0x110000`，非 padding 段末端须从 `0x11c580` 降至不高于 `0x10ffc0`，当前布局差 **`0xc5c0`（50,624）字节**。这是按当前段/对齐结构计算的镜像边界门槛，必须重建验签才能证明跨档；它不等于需要删去的源码行或某个单独函数大小，尤其不能把上一节三包槽的 32 KiB 原始几何缺口直接当作代码裁剪量。镜像还包含 QEMU 专用探针、ADC2 空桩、固定 guest 与测试签名输入，未做生产镜像的 map 差分，所以本表不是正式五组件固件大小。
+
+用[第一方 DRAM map 解析器](map_first_party_dram.py)只筛本次 ELF map 中设备地址范围的第一方 `.bss`/`.data`，排除 SDK、WAMR、上游 MQTT 核心和 QEMU 探针，常驻符号前十如下。这些 BSS 字节影响可用 RAM，**不按同额减少签名 Flash 镜像**；FRP session、Yamux、TLS 和分块 reader 的动态堆申请也不在此表。
+
+| 符号 | 源码对象 | 常驻 BSS 字节 |
+| --- | --- | ---: |
+| `s_reader` | `device_protocol/esp_base_protocol.c:49` | 9,228 |
+| `command` | `device_protocol/esp_base_protocol.c:62` | 8,400 |
+| `s_work` | `device_protocol/mqtt_owner.c:14` | 7,716 |
+| `s_context` | `device_protocol/esp_base_protocol.c:46` | 7,632 |
+| `s_load_bytes` | `remote_config/esp_base_remote_config.c:17` | 7,618 |
+| `s_commit_bytes` | `remote_config/esp_base_remote_config.c:18` | 7,618 |
+| `s_candidate` | `device_protocol/esp_base_protocol.c:61` | 7,608 |
+| `s_guard` | `device_protocol/esp_base_protocol.c:48` | 4,872 |
+| `s_config` | `device_protocol/frp_owner.c:7` | 2,730 |
+| `s_outcomes` | `device_protocol/esp_base_protocol.c:86` | 2,048 |
+
+复核入口：先在 darren-space 工作区执行下面命令，五个完整提交从本地 Git 对象导入 mac-work-1 独立目录；[准备脚本](prepare_exact_five_component_qemu.sh)固定复制及仅供 QEMU 的修改。它仍需上一节保留的仓外 ABI 2 工程与测试键：
+
+```bash
+ssh mac-work-1 'mkdir -p /private/tmp/esp-p6-exact-c3-20260926/{base,frp,mqtt,ota,container}-src'
+git -C tooling/esp-base archive 6976bc43be5c4ec6321abdae53a22e89d7d742ea | ssh mac-work-1 'tar -xf - -C /private/tmp/esp-p6-exact-c3-20260926/base-src'
+git -C tooling/esp-frp archive 533e29467b24d01157ff3b5229e62c93d101be61 | ssh mac-work-1 'tar -xf - -C /private/tmp/esp-p6-exact-c3-20260926/frp-src'
+git -C tooling/esp-mqtt archive 9d6d95e779f4f5ff387a6d9b54015bf4e43565f2 | ssh mac-work-1 'tar -xf - -C /private/tmp/esp-p6-exact-c3-20260926/mqtt-src'
+git -C tooling/esp-ota archive 5da4a0dfbbe97723286e1a9b050e7029cff6e718 | ssh mac-work-1 'tar -xf - -C /private/tmp/esp-p6-exact-c3-20260926/ota-src'
+git -C tooling/esp-container archive 8eb805f3f12cb3cd836e9833acb4aca878ae80e7 | ssh mac-work-1 'tar -xf - -C /private/tmp/esp-p6-exact-c3-20260926/container-src'
+scp tooling/esp-container/docs/operations/prepare_exact_five_component_qemu.sh mac-work-1:/private/tmp/esp-p6-exact-c3-20260926/prepare_exact_qemu.sh
+scp tooling/esp-container/docs/operations/frp_chunked_qemu.py mac-work-1:/private/tmp/esp-p6-exact-c3-20260926/run_qemu.py
+scp tooling/esp-container/docs/operations/map_first_party_dram.py mac-work-1:/private/tmp/esp-p6-exact-c3-20260926/map_first_party_dram.py
+ssh mac-work-1 'zsh /private/tmp/esp-p6-exact-c3-20260926/prepare_exact_qemu.sh'
+```
+
+随后在 mac-work-1 终端执行：
+
+```bash
+export IDF_PATH=/Users/darrenyou/.cache/darren-space/esp-idf-578cf89
+source "$IDF_PATH/export.sh"
+idf.py -C /private/tmp/esp-p6-exact-c3-20260926/probe-base/firmware -D ESP_BASE_CONTAINER_BINDING_PROBE=ON build
+python -m espsecure verify-signature --version 2 --keyfile /private/tmp/esp-p6-exact-c3-20260926/probe-base/test-key.pem /private/tmp/esp-p6-exact-c3-20260926/probe-base/firmware/build/esp_base.bin
+idf.py -C /private/tmp/esp-p6-exact-c3-20260926/probe-base/firmware size
+python3 /private/tmp/esp-p6-exact-c3-20260926/run_qemu.py /private/tmp/esp-p6-exact-c3-20260926/probe-base/firmware /private/tmp/esp-p6-exact-c3-20260926/qemu.log 25
+python3 /private/tmp/esp-p6-exact-c3-20260926/map_first_party_dram.py /private/tmp/esp-p6-exact-c3-20260926/probe-base/firmware/build/esp_base.map
+```
+
+这份镜像借助 QEMU 不提供的 ADC2 校准空桩，**不可刷实板**；本轮没有真实设备写入、Wi-Fi/FRPS/Broker/OTA 并发、完整 AEAD 密文验证、产品包安装或分区迁移。正式 Base 依赖锁与实板组合仍须独立闭合。
