@@ -71,6 +71,8 @@ host 工具的包格式和使用步骤见 [包工具](tools/README.md)。[只读
 
 [双目标 4 MiB Flash 容量边界](docs/operations/dual-target-flash-layout-boundary.md)核对当前包格式上界、两块实板各自的旧区保存与双 app 几何，以及首次分区切换必须具备的外部恢复条件；这是离线设计检查点。
 
+[双目标无探针签名 Base 链接下界](docs/operations/dual-target-signed-product-link-bound.md)核对现行主应用签名镜像的 ELF/map，区分真正保留的 FRP/MQTT/OTA 与仅编译的 Container/WAMR。
+
 ## 项目边界
 
 - 本仓拥有 WAMR 集成、guest ABI、包验证、实例生命周期、资源配额和三包槽机制；主机包工具现与设备流式扫描器对齐签名清单和 Wasm 字节可确定的 Classic/ABI 静态准入，另有 counter 样例编译检查。
