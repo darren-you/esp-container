@@ -276,3 +276,81 @@ python3 /private/tmp/esp-p6-exact-c3-20260926/map_first_party_dram.py /private/t
 ```
 
 这份镜像借助 QEMU 不提供的 ADC2 校准空桩，**不可刷实板**；本轮没有真实设备写入、Wi-Fi/FRPS/Broker/OTA 并发、完整 AEAD 密文验证、产品包安装或分区迁移。正式 Base 依赖锁与实板组合仍须独立闭合。
+
+## 2026-09-26：精确五候选的 Kconfig 四组 A/B 与离线分区几何
+
+本轮以紧邻上一节的**同一份**五仓精确提交和仓外 QEMU 工程为输入，在 mac-work-1 的 `/private/tmp/esp-p6-exact-kconfig-ab-20260926` 拷贝出四个独立目录。`diff -qr` 排除各自构建目录和预期不同的 `sdkconfig` 后，四份固件源码、469 字节 ABI 2 guest、FRP 分块记录头探针、ADC2 QEMU 空桩、RSA 测试键及组件均相同；`dependencies.lock` 四份均为 SHA-256 `ef846a7917fe1c87f0e3d429c923a5f072310268d49efb8e598b65fa4eae49e4`。ESP-IDF/lwIP/WAMR 仍是上一节三个精确 SHA，证书 bundle 保持 `CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y`，STA 的 `CONFIG_ESP_WIFI_ENABLE_WPA3_SAE=y` 也保持。只改变固定 SDK 的 TLS 角色选择与 SoftAP 支持。四目录各自从空构建目录完整编译、签名、用相同测试公钥验证第 0 签名块并执行 `idf.py size`；[准备脚本](prepare_exact_five_component_kconfig_ab.sh)记录输入复制和两项预期差分，[四组 SHA 收据](five-component-kconfig-ab-sha256.txt)锁定本次产物。首次并行配置曾竞争 ESP-IDF Component Manager 缓存 `index.lock`，失败的 baseline 已在另一配置完成后独立重建成功；后续复现应串行构建。
+
+随后发布的 Base `bcde4832d171aea160f33f8b421e0d3309ff5f01` 在正式 `sdkconfig.defaults.esp32c3` 也选了 SoftAP 关闭与 TLS client-only，并把四组件版本写入正式声明／锁、把 WAMR shrunk memory 关闭写入 CMake；本 A/B 构建**仍是 Base `6976bc43` 的仓外本地组件实验副本**，使用本节的 QEMU 控制台、fixture、探针和实验 `dependencies.lock`，没有从 `bcde4832` 重新编译。两者配置方向与所引用组件提交相同，镜像字节、签名 SHA 和产品验收事实不能混同。
+
+| Kconfig 组 | 实际 TLS 角色／SoftAP | `idf.py size` image | Flash `.text`／`.rodata` | DRAM 使用（`.bss`） | unsigned／signed 字节 | 非 padding 段末／padding 数据 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| baseline | server+client／开 | 1,164,352 | 864,266／220,564 | 170,830（91,616） | `0x120000`／`0x121000` | `0x11c580`／`0x3a40` |
+| client-only | client-only／开 | 1,157,342 | 857,264／220,556 | 170,830（91,616） | `0x120000`／`0x121000` | `0x11aa1c`／`0x55a4` |
+| sta-only | server+client／关 | 1,110,444 | 813,706／217,236 | 170,634（91,440） | `0x110000`／`0x111000` | `0x10f2ec`／`0x0cd4` |
+| combined | client-only／关 | 1,103,434 | 806,704／217,228 | 170,634（91,440） | `0x110000`／`0x111000` | `0x10d788`／`0x2838` |
+
+`client-only` 的未填充 image 比 baseline 少 7,010 字节，仍在同一签名扇区；`sta-only` 少 53,908 字节，**已由真实重建与 RSA 验签证明**跨到前一个 `0x111000` 签名台阶；两项合用少 60,918 字节，签名制品也为 `0x111000`。签名物理长度相对 baseline 下降 `0x10000`（65,536 字节），不等于代码减少 65,536 字节。`esptool image-info` 的第 6 段 `PADDING` 数据长度列于表中，段头均为 8 字节；再加 56 字节 footer 到各自 unsigned 末端、4 KiB RSA 签名扇区到 signed 末端。四组镜像各自的精确 SHA 在收据中；新 baseline 与上一节历史 baseline 内容哈希不同，是 `CONFIG_APP_COMPILE_TIME_DATE=y` 和 ELF 摘要随重新构建改变，段大小、Kconfig 和五组件输入一致。
+
+这个差分有源码和 map 依据：Base Wi-Fi 只建立 `WIFI_MODE_STA`，固定 SDK `CONFIG_ESP_WIFI_SOFTAP_SUPPORT` 的 Kconfig 明确允许不编译 SoftAP；STA-only map 中 AP 鉴权对象 `wpa_auth.c.obj` 8,666 字节、`ieee802_11.c.obj` 2,826 字节、`esp_hostap.c.obj` 2,050 字节等退出链接，SDK 其他闭源／归属不完整的 Wi-Fi 段不能仅凭这些对象求和。Base 的 MQTT、FRP、OTA TLS 发起路径均为客户端；client-only map 中 `ssl_tls12_server.c.obj` 4,976 字节退出链接。WPA3 STA 与完整根证书 bundle 均保持原配置。**这些是 QEMU 探针镜像上的尺寸增益**：尚未剔除探针、fixture、ADC2 空桩并建立生产 map 差分，不能把 `0x111000` 宣称为正式五组件固件大小，亦不能仅凭 QEMU 证明实际 Wi-Fi/FRPS/OTA 链路。
+
+### 组合镜像的资源回归
+
+只对最终 combined 组复跑相同 25 秒 QEMU。日志 SHA-256 `953a81817bc22d3b909d001b99a39636f8192e30f5d8c2b24b119709f716e793`，宿主按时 SIGTERM、无 panic。`ESP_BASE_READY` 后 guest 的 `open/init/event/stop=0`、counter 结果 3；guest 存活时 8-bit free／最大连续块 **66,876／45,056** 字节，比上一节原始配置的 66,588／45,056 多 288／0 字节。此时设备仍未配置，reported 的 `frp_sessions=0`。
+
+| Base READY 后 guest 存活 | FRP 记录头分块结果 | 申请后 free／最大块 | 清理后 free／最大块 |
+| --- | --- | ---: | ---: |
+| 56 KiB | 14 块成功 | 9,476／3,584 | 66,876／45,056 |
+| 60 KiB | 第 15 块 `EFRP_NO_MEMORY=-20` | 回滚后 66,876／45,056 | 66,876／45,056 |
+| 64 KiB | 第 15 块 `EFRP_NO_MEMORY=-20` | 回滚后 66,876／45,056 | 66,876／45,056 |
+
+失败过程最低 free 为 9,204 字节，14 块均释放；Base 初始化前 guest 存活的 64 KiB 头仍可申请 16 块。扫描只投喂 nonce 与长度头，**没有 FRP session、TLS/FRPS、密文、tag 或已认证明文**。因此本轮解决了探针镜像的一个 Flash 签名台阶，未解决满长记录与 guest 同时运行的 RAM 峰值，P6-03 继续未验收。
+
+### 只读 4 MiB 分区布局原型
+
+用[仓外 CSV 输入](five-component-kconfig-ab-partition.csv)核对一种硬切几何：前四分区保持，两个 app 各从 64 KiB 边界起始，原 app0 后的 `0x8000` 空隙作为**新** `base_store` NVS；末尾旧 NVS 原始位置标为 `base_archive`、`data/undefined/readonly`，预期只存档原始字节，新 app 不挂载它。`product_pkgs` 是**单个**可写 `data/undefined` 分区，内部由 Container 管理三个独立槽。官方 `gen_esp32part.py --flash-size 4MB --secure v2` 接受该 CSV，生成表 SHA-256 `59b08d9ea5254705338811b053a49eea273eac685c30295c017db8431754492a`；官方 `check_sizes.py partition --type app` 用 combined 签名 app 核对两个 `0x118000` 槽，返回可装入、每槽余 `0x7000`（28,672 字节，工具警告仅 2%）。
+
+| 区域 | 起始／长度 | 末端／可用余量 |
+| --- | --- | --- |
+| `ota_0` | `0x20000`／`0x118000` | 末端 `0x138000`；对本次 signed app 余 `0x7000` |
+| 新 `base_store` | `0x138000`／`0x8000` | 末端 `0x140000`，恰 8 个 NVS 页 |
+| `ota_1` | `0x140000`／`0x118000` | 末端 `0x258000`；对本次 signed app 余 `0x7000` |
+| `product_pkgs` | `0x258000`／`0x186000` | 三槽各 `0x82000`（532,480 字节），分别起于 `0x258000`、`0x2da000`、`0x35c000`，占满至 `0x3de000` |
+| 未分配尾隙 | `0x3de000`／`0x2000` | 8,192 字节，至旧分区起点 |
+| 旧 `base_archive` | `0x3e0000`／`0x20000` | 原始字节需另行确保不被擦写，末端 `0x400000` |
+
+在精确 Container `8eb805f` 的宿主静态库上，[几何调用](five_component_partition_geometry_check.c)以 4 KiB 擦除粒度、4 字节写入粒度和上述三槽调用真实 `econtainer_slots_geometry_valid` 返回 1。`slots_idf.c` 的 provider 要求 package 为可写 `data/undefined`、NVS 为可写 `data/nvs`、精确标签／地址／长度且两者不重叠；此 CSV 的 `product_pkgs` 与**新** `base_store` 形式满足，旧 `base_archive` 则是独立 readonly 类型。固定 SDK 的 `esp_partition/partition.c` 会把分区标志变成 `esp_partition_t.readonly`，`partition_target.c` 中 `esp_partition_write`、`esp_partition_write_raw` 和 `esp_partition_erase_range` 对它返回 `ESP_ERR_NOT_ALLOWED`；这是**分区 API 层**的防写。按绝对地址调用底层 `esp_flash_write`／擦除或使用外部刷写工具不经过此标志，不能由 CSV 的 `readonly` 宣称旧 128 KiB 永远不会被覆盖。没有真实设备分区表可供 `econtainer_slots_idf_bind` 回读，因此 provider 的设备绑定、擦写和迁移均未验证。现有 Base OTA policy 还硬编码 `ota_1@0x200000` 与 `0x1e0000` app 大小，不对应原型；现有产品分区 CSV 没有改动。旧字节仅在未来完整离线恢复窗口**禁止擦写旧区并核对前后摘要**时才可能保留，分区表生成本身不会保存或迁移它们。
+
+新 NVS 为 32 KiB、8 个 4 KiB 页；固定 IDF 每页 126 个 32 字节 entry，正常可写至少保留一页 Empty。Base 最大规范配置 7,618 字节需分成 4,000＋3,618 两个 NVS blob chunk，含 chunk 头和索引约 **242 entries/代**；已有一代加连续两次 CAS 新提交，写入流量约 726 entries。Base OTA 单一收据 118 字节约 6 entries、Container 固定状态 blob 288 字节约 11 entries，加三个 namespace 最少约 746 entries；七页名义 882 entries，仅余约 136 entries（4,352 字节的 entry 区）。这个估算没有包含页尾碎片、重复 OTA/Container 写入、GC 搬迁与断电残留；IDF NVS `requestNewPage` 在仅剩一空页时会复制有效项再擦旧页。**8 页可通过静态单 blob 长度边界，但连续两次 CAS 与回收安全性未被证明**，须用精确 SDK 和真实负载／断电序列验证后才能决定该布局。包槽 `0x82000` 也只是原型几何，不冻结 `max_package_size_bytes` 或 Wasm 上限。
+
+本原型没有可独立用作 FRP 64 KiB 认证前暂存的 Flash 区：三个包槽已连续占满 `product_pkgs`，新 NVS 与旧档案各有专属所有权，唯一未分配尾隙只有 `0x2000`；两个 app 内各 `0x7000` 余量也属于签名固件槽，不能拼接或借用为记录暂存。未做 Flash 暂存实现，不能由签名尺寸改善推断满长 AEAD 记录可交付。
+
+复现先按上一节生成精确五仓 QEMU 工程；在 mac-work-1 运行本节[四组输入脚本](prepare_exact_five_component_kconfig_ab.sh)，然后依次构建，避免 Component Manager 缓存锁竞争：
+
+```bash
+export IDF_PATH=/Users/darrenyou/.cache/darren-space/esp-idf-578cf89
+source "$IDF_PATH/export.sh"
+bash /private/tmp/prepare_exact_five_component_kconfig_ab.sh
+for variant in baseline client-only sta-only combined; do
+  firmware="/private/tmp/esp-p6-exact-kconfig-ab-20260926/$variant/firmware"
+  idf.py -C "$firmware" -D ESP_BASE_CONTAINER_BINDING_PROBE=ON build
+  idf.py -C "$firmware" size
+  python -m espsecure verify-signature --version 2 --keyfile /private/tmp/esp-p6-exact-c3-20260926/probe-base/test-key.pem "$firmware/build/esp_base.bin"
+  python -m esptool image-info "$firmware/build/esp_base-unsigned.bin"
+done
+python3 /private/tmp/esp-p6-exact-c3-20260926/run_qemu.py /private/tmp/esp-p6-exact-kconfig-ab-20260926/combined/firmware /private/tmp/esp-p6-exact-kconfig-ab-20260926/combined/qemu.log 25
+```
+
+脚本需先从本仓复制到示例 `/private/tmp/prepare_exact_five_component_kconfig_ab.sh`；上述四份 `sdkconfig` 构建后 SHA 见收据，Kconfig 解析会移除与 SoftAP/TLS server 从属的少数选项。分区验证另将本仓 CSV 复制到仓外 `partition-prototype/partition_table_hardcut.csv`，用下列命令执行官方检查；几何 C 文件亦复制到同目录，复用上一节精确 `container-src`：
+
+```bash
+probe=/private/tmp/esp-p6-exact-kconfig-ab-20260926/partition-prototype
+python3 "$IDF_PATH/components/partition_table/gen_esp32part.py" --flash-size 4MB --secure v2 "$probe/partition_table_hardcut.csv" "$probe/partition_table_hardcut.bin"
+python3 "$IDF_PATH/components/partition_table/check_sizes.py" partition --type app "$probe/partition_table_hardcut.bin" /private/tmp/esp-p6-exact-kconfig-ab-20260926/combined/firmware/build/esp_base.bin
+cmake -S /private/tmp/esp-p6-exact-c3-20260926/container-src -B "$probe/container-build" -DBUILD_TESTING=OFF
+cmake --build "$probe/container-build"
+cc -std=c11 -Wall -Wextra -Werror -I/private/tmp/esp-p6-exact-c3-20260926/container-src/components/esp_container/include "$probe/geometry_check.c" "$probe/container-build/libesp_container.a" /opt/homebrew/lib/libcrypto.dylib -o "$probe/geometry_check"
+"$probe/geometry_check"
+```
+
+这只是**未烧写**的尺寸和合同原型，未授权改生产分区或设备。
