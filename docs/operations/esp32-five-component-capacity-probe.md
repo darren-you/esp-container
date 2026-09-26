@@ -1,5 +1,7 @@
 # ESP32-D0WD-V3 五组件签名容量探针：2026-09-26
 
+本页保留当日锁定旧 Base／FRP 的静态实验事实；后续新锁的 ESP32 QEMU 动态读数见[2026-09-27 认证记录容量探针](esp32-authenticated-qemu-capacity-probe.md)。
+
 ## 结论
 
 ESP32-D0WD-V3 的仓外五组件深链接镜像已在固定 ESP-IDF 中完成 ECDSA v1 测试键签名和正式工具验签。基线 signed bin 为 **`0x10fff4`**；关闭未使用的 Wi-Fi SoftAP、只保留 TLS client 后为 **`0xffff4`**。两者均装得进本轮离线候选的两个 `0x120000` app 槽，分别余 `0x1000c` 和 `0x2000c` 字节。后者静态 DRAM 只减少 160 字节，不能据镜像缩减量推断运行堆。

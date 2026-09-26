@@ -1,5 +1,9 @@
 # 开发检查点
 
+## 2026-09-27 ESP32 五组件完整认证记录 QEMU 容量探针
+
+以 Base `1f43b6f`、FRP `1f0c8f3`、MQTT `9d6d95e`、OTA `2072731`、Container `8eb805f`、WAMR `26c235e` 和固定 ESP-IDF／lwIP 装配仓外 ESP32 镜像，临时 ECDSA v1 测试键签名文件 **1,114,100 B**、验签数据长 1,114,032 B，官方验签与 `0x120000` app 槽容量检查均通过。官方 Xtensa QEMU 两次运行在 Base READY 后得到 free／最大块 **147,340／110,592 B**；单页 ABI 2 guest 存活时为 **61,404／43,008 B**，两次完整 4 KiB AEAD 认证和逐字节比较通过，坏 tag 拒绝且无明文，完整 64 KiB 记录在第 14 块申请失败并清理。Base 初始化前同一 guest 与完整 64 KiB 记录则认证成功。探针无 ADC/Wi-Fi 空桩，但无真实 Wi-Fi／TLS／Broker／FRPS／OTA 及实板并发，P6-03 仍未验收。完整源码锁、trace、首次清理差额与复现命令见[独立报告](esp32-authenticated-qemu-capacity-probe.md)。未接设备或使用生产密钥。
+
 ## 2026-09-26 双目标独立运行探针
 
 在 `codex/c3-low-memory@0024695510e2b445bfdb089247d31f8cbd84e010` 的未提交候选上，C3 与 ESP32 样例共用 `examples/runtime-probe/main.c`，分别保留自己的 target、控制台和 `dependencies.lock`。在 mac-work-1 的仓外副本使用锁定 ESP-IDF `578cf89c343e388db43ba1f4ddcd602fedcb763c`、lwIP `2758df4cd3666b3b2a5b53830148379326425c0d` 与 WAMR `26c235e53e29acd8b43abe7f3b524577bd4d1ae5` 执行 `check_sdk.py`，再分别运行 `idf.py -C examples/c3-runtime build` 与 `idf.py -C examples/esp32-runtime build`，均完整链接。生成锁分别声明 `target: esp32c3`、`target: esp32`；ESP32 `sdkconfig` 确认为 UART0 控制台与 4 MiB Flash。
